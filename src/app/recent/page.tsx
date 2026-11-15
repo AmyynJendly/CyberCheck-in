@@ -14,6 +14,8 @@ interface Item {
   team_name: string | null;
   day_label: string;
   can_undo: boolean;
+  paid_kind: "membership" | "entry" | null;
+  paid_amount: number | null;
 }
 
 const METHOD = { qr: "QR", manual: "Manual", walk_in: "Walk-in" } as const;
@@ -63,13 +65,14 @@ export default function RecentPage() {
         </div>
       )}
       {items && items.length > 0 && (
-        <Section footer="Your last 20. You can undo your own check-ins for 10 minutes; after that, ask an admin.">
+        <Section footer="Your last 20. You can undo your own check-ins for 10 minutes; after that, ask an admin. Undo doesn't cancel a payment; an admin does that from Cash.">
           {items.map((it) => (
             <div key={it.id} className={`flex min-h-[60px] items-center gap-3 px-4 py-2.5 ${it.undone_at ? "opacity-45" : ""}`}>
               <div className="min-w-0 flex-1">
                 <p className={`t-body truncate ${it.undone_at ? "line-through" : ""}`}>{it.name}</p>
                 <p className="t-footnote text-label2">
                   {fmtDateTime(it.checked_at)} · {it.day_label} · {METHOD[it.method]}
+                  {it.paid_amount !== null && ` · paid ${it.paid_amount} DT`}
                   {it.undone_at ? " · Undone" : ""}
                 </p>
               </div>

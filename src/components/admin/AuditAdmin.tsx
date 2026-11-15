@@ -44,6 +44,12 @@ const LABELS: Record<string, string> = {
   reset_pin: "Reset PIN",
   deactivate_staff: "Deactivated staff",
   activate_staff: "Reactivated staff",
+  payment: "Payment taken",
+  void_payment: "Payment cancelled",
+  import_members: "Imported members",
+  add_member: "Added member",
+  delete_member: "Removed member",
+  link_member: "Linked to member list",
 };
 
 const DOT: Record<string, string> = {
@@ -55,6 +61,8 @@ const DOT: Record<string, string> = {
   checkin: "bg-sys-green",
   manual_checkin: "bg-sys-green",
   walk_in: "bg-sys-green",
+  payment: "bg-sys-blue",
+  void_payment: "bg-sys-red",
 };
 
 function summary(e: Entry): string | null {
@@ -65,6 +73,8 @@ function summary(e: Entry): string | null {
   if (e.action === "edit_email") return `${d.from ?? "none"} → ${d.to}`;
   if (e.action === "form_submit" && typeof d.outcome === "string") return d.outcome.replace(/_/g, " ");
   if (e.action === "export" && d.rows !== undefined) return `${d.rows} rows`;
+  if ((e.action === "payment" || e.action === "void_payment") && d.amount !== undefined) return `${d.kind} ${d.amount} DT`;
+  if (e.action === "import_members") return `${d.added} new, ${d.updated} updated`;
   return null;
 }
 

@@ -28,7 +28,13 @@ export type AuditAction =
   | "update_staff"
   | "reset_pin"
   | "deactivate_staff"
-  | "activate_staff";
+  | "activate_staff"
+  | "payment"
+  | "void_payment"
+  | "import_members"
+  | "add_member"
+  | "delete_member"
+  | "link_member";
 
 export interface AuditEntry {
   staffId?: string | null;

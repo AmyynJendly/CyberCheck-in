@@ -5,7 +5,9 @@ import { useSearchParams } from "next/navigation";
 import { CircleCheck } from "lucide-react";
 import { useApp, useDayParam } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
-import { Button, NeedEvent, Notice, Page, SearchField, Spinner, TextField, fmtTime } from "@/components/ui";
+import { Button, NeedEvent, Notice, Page, Row as ListRow, SearchField, Section, Sheet, Spinner, TextField, fmtTime } from "@/components/ui";
+import { MemberBadge, PaymentChoices } from "@/components/Payment";
+import { fmtDT, type PaymentKind, type PaymentOption } from "@/components/types";
 
 interface Row {
   id: string;
@@ -21,6 +23,16 @@ interface Row {
   checkin_id: string | null;
   checked_at: string | null;
   checked_by: string | null;
+  member_id: string | null;
+  member_valid_until: string | null;
+}
+
+interface MemberHit {
+  id: string;
+  full_name: string;
+  email: string | null;
+  phone: string | null;
+  valid_until: string;
 }
 
 type Msg = { tone: "ok" | "warn" | "error"; text: string };
@@ -43,7 +55,10 @@ function SearchInner() {
   const [editing, setEditing] = useState<string | null>(null);
   const [emailDraft, setEmailDraft] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [payFor, setPayFor] = useState<Record<string, PaymentOption[]>>({});
+  const [linking, setLinking] = useState<Row | null>(null);
   const seq = useRef(0);
+  const paidEvent = !!event?.days.some((d) => d.access !== "free");
 
   const runSearch = useCallback(
     async (term: string) => {
@@ -78,12 +93,44 @@ function SearchInner() {
     if (!event) return;
     setBusyId(row.id);
     try {
-      const r = await api<{ status: string; checked_at?: string; by_staff_name?: string; day_label?: string }>("/api/checkin/manual", {
+      const r = await api<{ status: string; checked_at?: string; by_staff_name?: string; day_label?: string; options?: PaymentOption[] }>("/api/checkin/manual", {
         body: { attendee_id: row.id, event_id: event.id, ...dayParam },
       });
+      if (r.status === "PAYMENT_REQUIRED" && r.options) {
+        setPayFor((p) => ({ ...p, [row.id]: r.options! }));
+        setMsgs((m) => {
+          const { [row.id]: _, ...rest } = m;
+          return rest;
+        });
+        return;
+      }
       if (r.status === "OK") setMsg(row.id, { tone: "ok", text: `Checked in for ${r.day_label}.` });
       else if (r.status === "ALREADY_CHECKED_IN") setMsg(row.id, { tone: "warn", text: `Already checked in at ${fmtTime(r.checked_at)} by ${r.by_staff_name}.` });
       else if (r.status === "NO_EVENT_DAY") setMsg(row.id, { tone: "error", text: "No event day today." });
+      else setMsg(row.id, { tone: "error", text: r.status });
+      await runSearch(q);
+    } catch (e) {
+      setMsg(row.id, { tone: "error", text: errorMessage(e) });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const pay = async (row: Row, kind: PaymentKind) => {
+    if (!event) return;
+    setBusyId(row.id);
+    try {
+      const r = await api<{ status: string; day_label?: string; payment?: { kind: PaymentKind; amount: number } | null; checked_at?: string; by_staff_name?: string }>(
+        "/api/checkin/pay",
+        { body: { attendee_id: row.id, event_id: event.id, kind, method: "manual", ...dayParam } },
+      );
+      setPayFor(({ [row.id]: _, ...rest }) => rest);
+      if (r.status === "OK")
+        setMsg(row.id, {
+          tone: "ok",
+          text: r.payment ? `Paid ${fmtDT(r.payment.amount)}${r.payment.kind === "membership" ? ", now a member" : ""}. Checked in.` : `Checked in for ${r.day_label}.`,
+        });
+      else if (r.status === "ALREADY_CHECKED_IN") setMsg(row.id, { tone: "warn", text: `Already checked in at ${fmtTime(r.checked_at)} by ${r.by_staff_name}. No payment recorded.` });
       else setMsg(row.id, { tone: "error", text: r.status });
       await runSearch(q);
     } catch (e) {
@@ -137,7 +184,9 @@ function SearchInner() {
             <article key={r.id} className="rounded-[14px] bg-bg2 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="t-headline">{r.full_name}</h2>
+                  <h2 className="t-headline">
+                    {r.full_name} {r.member_id && <MemberBadge small />}
+                  </h2>
                   <p className="t-subhead text-label2">{[r.team_name, r.class_year, r.source === "walk_in" ? "Walk-in" : null].filter(Boolean).join(" · ") || "No team or class"}</p>
                 </div>
                 <span className="shrink-0 rounded-[8px] bg-bg3 px-2 py-1 font-mono text-[15px] font-semibold tracking-[0.14em]">{r.short_code}</span>
@@ -167,8 +216,15 @@ function SearchInner() {
                 </p>
               )}
 
+              {payFor[r.id] && !r.checkin_id && (
+                <div className="mt-4 space-y-2">
+                  <p className="t-subhead font-semibold text-sys-blue">Payment needed: not a club member.</p>
+                  <PaymentChoices options={payFor[r.id]} busy={busyId === r.id} onPay={(kind) => pay(r, kind)} onCancel={() => setPayFor(({ [r.id]: _, ...rest }) => rest)} />
+                </div>
+              )}
+
               <div className="mt-4 flex flex-wrap gap-2">
-                {!r.checkin_id && activeDay && (
+                {!r.checkin_id && activeDay && !payFor[r.id] && (
                   <Button onClick={() => checkIn(r)} disabled={busyId === r.id} className="min-w-[120px] flex-1">
                     Check In
                   </Button>
@@ -187,6 +243,11 @@ function SearchInner() {
                 >
                   {r.email ? "Fix Email" : "Add Email"}
                 </Button>
+                {paidEvent && !r.member_id && (
+                  <Button variant="gray" onClick={() => setLinking(r)}>
+                    Member? Find on List
+                  </Button>
+                )}
               </div>
 
               {editing === r.id && (
@@ -220,7 +281,78 @@ function SearchInner() {
           );
         })}
       </div>
+      <LinkMemberSheet
+        row={linking}
+        onClose={() => setLinking(null)}
+        onLinked={() => {
+          if (linking) {
+            setMsg(linking.id, { tone: "ok", text: "Linked to the member list. Check them in for free." });
+            setPayFor(({ [linking.id]: _, ...rest }) => rest);
+          }
+          setLinking(null);
+          void runSearch(q);
+        }}
+      />
     </>
+  );
+}
+
+function LinkMemberSheet({ row, onClose, onLinked }: { row: Row | null; onClose: () => void; onLinked: () => void }) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<MemberHit[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (row) {
+      setQ(row.full_name);
+      setError(null);
+    }
+  }, [row]);
+  useEffect(() => {
+    if (!row || q.trim().length < 2) return setHits(null);
+    const t = setTimeout(async () => {
+      try {
+        setHits((await api<{ members: MemberHit[] }>(`/api/members/search?q=${encodeURIComponent(q.trim())}`)).members);
+      } catch (e) {
+        setError(errorMessage(e));
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, row]);
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <Sheet open={!!row} onClose={onClose} title={`Find ${row?.full_name ?? ""} on the member list`} message="Only link someone you've confirmed is a member.">
+      <div className="space-y-3 border-t border-sep/60 px-3 py-3 text-left">
+        <SearchField value={q} onChange={setQ} placeholder="Name, email or phone" />
+        {error && <Notice tone="error">{error}</Notice>}
+        {hits?.length === 0 && <p className="t-subhead px-1 text-label2">Not on the list. They can join at the desk.</p>}
+        {hits && hits.length > 0 && (
+          <div className="max-h-[40vh] overflow-y-auto">
+            <Section>
+              {hits.map((m) => {
+                const valid = m.valid_until >= today;
+                return (
+                  <ListRow
+                    key={m.id}
+                    title={m.full_name}
+                    subtitle={[m.email, m.phone, valid ? `until ${m.valid_until}` : `expired ${m.valid_until}`].filter(Boolean).join(" · ")}
+                    disabled={!valid}
+                    onClick={async () => {
+                      if (!row) return;
+                      try {
+                        await api(`/api/attendees/${row.id}/member`, { body: { member_id: m.id } });
+                        onLinked();
+                      } catch (e) {
+                        setError(errorMessage(e));
+                      }
+                    }}
+                  />
+                );
+              })}
+            </Section>
+          </div>
+        )}
+      </div>
+    </Sheet>
   );
 }
 

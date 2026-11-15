@@ -6,11 +6,22 @@ import { CircleCheck } from "lucide-react";
 import { useApp, useDayParam } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
 import { DayPicker } from "@/components/DayPicker";
-import { Button, FieldRow, NeedEvent, Notice, Page, Section, TextField } from "@/components/ui";
+import { Button, FieldRow, NeedEvent, Notice, Page, Section, Sheet, TextField } from "@/components/ui";
+import { MemberBadge, PaymentChoices } from "@/components/Payment";
+import { accessLabel, fmtDT, type PaymentKind, type PaymentOption } from "@/components/types";
 
 type WalkInResult =
-  | { status: "OK"; name: string; short_code: string; day_label: string; email_queued: boolean }
+  | {
+      status: "OK";
+      name: string;
+      short_code: string;
+      day_label: string;
+      email_queued: boolean;
+      is_member: boolean;
+      payment: { kind: PaymentKind; amount: number } | null;
+    }
   | { status: "NO_EVENT_DAY" }
+  | { status: "PAYMENT_REQUIRED"; name: string; day_label: string; options: PaymentOption[] }
   | { status: "EMAIL_EXISTS"; attendee_id: string; name: string };
 
 const EMPTY = { full_name: "", phone: "", email: "", class_year: "", team_name: "" };
@@ -23,17 +34,22 @@ export default function WalkInPage() {
   const [result, setResult] = useState<WalkInResult | null>(null);
   const [lastEmail, setLastEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [options, setOptions] = useState<PaymentOption[] | null>(null);
 
   const set = (k: keyof typeof EMPTY) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const send = async (payment: PaymentKind | null) => {
     if (!event || busy) return;
     setBusy(true);
     setError(null);
     setResult(null);
     try {
-      const r = await api<WalkInResult>("/api/walkin", { body: { event_id: event.id, ...form, ...dayParam } });
+      const r = await api<WalkInResult>("/api/walkin", { body: { event_id: event.id, ...form, ...dayParam, payment } });
+      if (r.status === "PAYMENT_REQUIRED") {
+        setOptions(r.options);
+        return;
+      }
+      setOptions(null);
       setResult(r);
       setLastEmail(form.email);
       if (r.status === "OK") {
@@ -47,6 +63,11 @@ export default function WalkInPage() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void send(null);
   };
 
   return (
@@ -66,8 +87,13 @@ export default function WalkInPage() {
             <div className="anim-fade flex items-start gap-3 rounded-[14px] bg-sys-green/15 p-4">
               <CircleCheck className="mt-0.5 h-7 w-7 shrink-0 text-sys-green" strokeWidth={2.2} aria-hidden />
               <div className="min-w-0">
-                <p className="t-headline">{result.name}</p>
-                <p className="t-subhead text-label2">Added and checked in for {result.day_label}.</p>
+                <p className="t-headline">
+                  {result.name} {result.is_member && <MemberBadge small />}
+                </p>
+                <p className="t-subhead text-label2">
+                  Added and checked in for {result.day_label}.
+                  {result.payment && ` Paid ${fmtDT(result.payment.amount)}${result.payment.kind === "membership" ? ", now a club member" : " (entry only)"}.`}
+                </p>
                 <p className="t-subhead mt-2 text-label2">
                   Backup code <span className="ml-1 font-mono text-[17px] font-semibold tracking-[0.14em] text-label">{result.short_code}</span>
                 </p>
@@ -82,6 +108,11 @@ export default function WalkInPage() {
             </Notice>
           )}
           {result?.status === "NO_EVENT_DAY" && <Notice tone="error">No event day today. Nobody was added.</Notice>}
+          {activeDay && activeDay.access !== "free" && !result && (
+            <Notice tone="info">
+              Today: {accessLabel(activeDay, event.membership_fee)}. Members on the club list (matched by email or phone) get in free.
+            </Notice>
+          )}
           {error && <Notice tone="error">{error}</Notice>}
 
           <form onSubmit={submit} className="space-y-7">
@@ -108,6 +139,17 @@ export default function WalkInPage() {
               {busy ? "Adding…" : "Add & Check In"}
             </Button>
           </form>
+
+          <Sheet
+            open={!!options}
+            onClose={() => setOptions(null)}
+            title={`${form.full_name || "This person"} isn't on the member list`}
+            message="Take the cash first, then tap what they paid."
+          >
+            <div className="border-t border-sep/60 p-3">
+              {options && <PaymentChoices options={options} busy={busy} onPay={(k) => send(k)} onCancel={() => setOptions(null)} />}
+            </div>
+          </Sheet>
         </>
       )}
     </Page>

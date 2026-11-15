@@ -2,16 +2,35 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, CircleAlert, CircleCheck, CircleX, Keyboard, UserPlus } from "lucide-react";
+import { Banknote, ChevronLeft, CircleAlert, CircleCheck, CircleX, Keyboard, UserPlus } from "lucide-react";
 import { useApp, useDayParam } from "@/components/AppContext";
 import { api, ApiError } from "@/components/api";
 import { useStats } from "@/components/useStats";
 import { DayPicker } from "@/components/DayPicker";
 import { NeedEvent, Notice, OfflineBanner, Spinner, btn, fmtTime } from "@/components/ui";
 import { parseScannedText } from "@/lib/qr-format";
+import { PaymentChoices } from "@/components/Payment";
+import { accessLabel, fmtDT, type PaymentKind, type PaymentOption } from "@/components/types";
 
 type Result =
-  | { status: "OK"; name: string; team_name: string | null; class_year: string | null; day_label: string }
+  | {
+      status: "OK";
+      name: string;
+      team_name: string | null;
+      class_year: string | null;
+      day_label: string;
+      is_member?: boolean;
+      payment?: { kind: PaymentKind; amount: number } | null;
+    }
+  | {
+      status: "PAYMENT_REQUIRED";
+      attendee_id: string;
+      name: string;
+      team_name: string | null;
+      class_year: string | null;
+      day_label: string;
+      options: PaymentOption[];
+    }
   | { status: "ALREADY_CHECKED_IN"; name: string; checked_at: string; by_staff_name: string }
   | { status: "WRONG_EVENT"; name: string; other_event_name: string }
   | { status: "INVALID" }
@@ -40,7 +59,9 @@ function vibrate(pattern: number | number[]) {
 function summarize(r: Result): Omit<RecentScan, "id" | "at"> {
   switch (r.status) {
     case "OK":
-      return { tone: "ok", title: r.name, detail: "Checked in" };
+      return { tone: "ok", title: r.name, detail: r.payment ? `Paid ${fmtDT(r.payment.amount)}` : r.is_member ? "Member" : "Checked in" };
+    case "PAYMENT_REQUIRED":
+      return { tone: "bad", title: r.name, detail: "Not paid" };
     case "ALREADY_CHECKED_IN":
       return { tone: "warn", title: r.name, detail: `Already in · ${fmtTime(r.checked_at)}` };
     case "WRONG_EVENT":
@@ -56,6 +77,7 @@ function summarize(r: Result): Omit<RecentScan, "id" | "at"> {
 
 export default function ScanPage() {
   const { ready, event, activeDay, me } = useApp();
+  const [paying, setPaying] = useState(false);
   const dayParam = useDayParam();
   const { stats, reload } = useStats(event?.id, dayParam.event_day_id, 10_000);
   const [result, setResult] = useState<Result | null>(null);
@@ -77,6 +99,12 @@ export default function ScanPage() {
 
   const show = useCallback((r: Result) => {
     setResult(r);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    if (r.status === "PAYMENT_REQUIRED") {
+      // Stays up (scanning paused) until HR records the payment or taps "Didn't pay".
+      vibrate([60, 40, 60, 40, 60]);
+      return;
+    }
     setRecent((cur) => [{ id: ++seq.current, at: Date.now(), ...summarize(r) }, ...cur].slice(0, 3));
     if (r.status === "OK") vibrate(120);
     else if (r.status === "ALREADY_CHECKED_IN") vibrate([80, 60, 80]);
@@ -117,6 +145,33 @@ export default function ScanPage() {
     },
     [show, reload],
   );
+  const pay = useCallback(
+    async (attendeeId: string, kind: PaymentKind) => {
+      const { eventId, dayParam } = ctx.current;
+      setPaying(true);
+      try {
+        const r = await api<Result>("/api/checkin/pay", { body: { event_id: eventId, attendee_id: attendeeId, kind, method: "qr", ...dayParam }, timeoutMs: 15_000 });
+        show(r);
+        if (r.status === "OK") {
+          setLocalCount((n) => n + 1);
+          void reload();
+        }
+      } catch (e) {
+        show({ status: "ERROR", message: e instanceof ApiError && e.code === "NETWORK" ? "No connection. Nothing was saved; try again." : e instanceof Error ? e.message : "Error" });
+      } finally {
+        setPaying(false);
+      }
+    },
+    [show, reload],
+  );
+
+  const notPaid = useCallback((r: Extract<Result, { status: "PAYMENT_REQUIRED" }>) => {
+    setRecent((cur) => [{ id: ++seq.current, at: Date.now(), ...summarize(r) }, ...cur].slice(0, 3));
+    setResult(null);
+    last.current = { text: "", at: 0 }; // they may come back after getting cash
+    busy.current = false;
+  }, []);
+
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
 
@@ -281,8 +336,12 @@ export default function ScanPage() {
               <p className="t-caption mt-0.5 text-white/70">Checked in today</p>
             </div>
           </div>
-          <span className="t-caption max-w-[30%] shrink-0 truncate rounded-full bg-black/55 px-3 py-1.5 font-semibold text-white backdrop-blur-xl">
+          <span
+            className="t-caption max-w-[30%] shrink-0 truncate rounded-full bg-black/55 px-3 py-1.5 font-semibold text-white backdrop-blur-xl"
+            title={event ? accessLabel(activeDay, event.membership_fee) : undefined}
+          >
             {activeDay.label || activeDay.day_date}
+            {activeDay.access !== "free" && <span className="block font-normal text-white/70">{activeDay.access === "members" ? "Members" : "Paid entry"}</span>}
           </span>
         </div>
       </div>
@@ -314,7 +373,20 @@ export default function ScanPage() {
         </div>
       </div>
 
-      {result && <ResultOverlay result={result} onClose={dismiss} />}
+      {result?.status === "PAYMENT_REQUIRED" ? (
+        <div className="anim-fade fixed inset-0 z-[60] flex flex-col items-center justify-center overflow-y-auto bg-[#0040dd] px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))] text-center text-white" role="alertdialog" aria-label="Payment needed">
+          <Banknote className="anim-pop h-[84px] w-[84px]" strokeWidth={1.6} aria-hidden />
+          <span className="t-title1 mt-4">Payment Needed</span>
+          <span className="mt-2 font-display text-[30px] font-bold leading-tight tracking-tight">{result.name}</span>
+          <span className="t-body mt-1 text-white/85">Not a club member · {result.day_label}</span>
+          <div className="mt-7 w-full max-w-sm">
+            <PaymentChoices onDark options={result.options} busy={paying} onPay={(kind) => pay(result.attendee_id, kind)} onCancel={() => notPaid(result)} />
+          </div>
+          <p className="t-footnote mt-4 max-w-sm text-white/70">Take the cash first, then tap what they paid. It&apos;s saved under your name.</p>
+        </div>
+      ) : (
+        result && <ResultOverlay result={result} onClose={dismiss} />
+      )}
     </div>
   );
 }
@@ -331,7 +403,14 @@ function ResultOverlay({ result, onClose }: { result: Result; onClose: () => voi
       Icon = CircleCheck;
       title = "Welcome";
       name = result.name;
-      lines = [[result.team_name, result.class_year].filter(Boolean).join(" · "), result.day_label];
+      lines = [
+        [result.team_name, result.class_year].filter(Boolean).join(" · "),
+        result.payment
+          ? `Paid ${fmtDT(result.payment.amount)} · ${result.payment.kind === "membership" ? "now a member" : "entry only"}`
+          : result.is_member
+            ? `Member · ${result.day_label}`
+            : result.day_label,
+      ];
       break;
     case "ALREADY_CHECKED_IN":
       bg = "bg-warn-deep";
@@ -349,6 +428,8 @@ function ResultOverlay({ result, onClose }: { result: Result; onClose: () => voi
       title = "Invalid Code";
       lines = ["This isn't a ticket for this system.", "Use Enter Code with their 6-character code."];
       break;
+    case "PAYMENT_REQUIRED":
+      return null;
     case "NO_EVENT_DAY":
       title = "No Event Today";
       lines = ["Ask an admin to pick a day."];

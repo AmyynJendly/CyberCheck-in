@@ -27,10 +27,13 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
     short_code: string;
     email_status: string;
     created_at: string;
+    member_until: string | null;
   }>(
     `select a.id, a.full_name, a.email, a.phone, a.class_year, a.team_name, a.source,
-            s.name as added_by, a.short_code, a.email_status, a.created_at
-       from attendees a left join staff s on s.id = a.added_by_staff_id
+            s.name as added_by, a.short_code, a.email_status, a.created_at, m.valid_until as member_until
+       from attendees a
+       left join staff s on s.id = a.added_by_staff_id
+       left join members m on m.id = a.member_id
       where a.event_id = $1
       order by lower(a.full_name), a.created_at`,
     [eventId],
@@ -45,6 +48,15 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
   );
   const map = new Map<string, (typeof checkins.rows)[number]>();
   for (const c of checkins.rows) map.set(`${c.attendee_id}|${c.event_day_id}`, c);
+  const payments = await query<{ attendee_id: string; event_day_id: string; kind: string; amount: number; paid_to: string }>(
+    `select p.attendee_id, p.event_day_id, p.kind, p.amount, s.name as paid_to
+       from payments p join staff s on s.id = p.staff_id
+      where p.event_id = $1 and p.voided_at is null`,
+    [eventId],
+  );
+  const paid = new Map<string, (typeof payments.rows)[number]>();
+  for (const p of payments.rows) paid.set(`${p.attendee_id}|${p.event_day_id}`, p);
+  const hasPaidDays = days.some((d) => d.access !== "free") || payments.rows.length > 0;
 
   const header = [
     "name",
@@ -57,9 +69,15 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
     "short_code",
     "email_status",
     "registered_at",
+    ...(hasPaidDays ? ["member_until"] : []),
     ...days.flatMap((d) => {
-      const l = dayLabel(d);
-      return [`${l} (${d.day_date}) checked_at`, `${l} (${d.day_date}) checked_by`, `${l} (${d.day_date}) method`];
+      const l = `${dayLabel(d)} (${d.day_date})`;
+      return [
+        `${l} checked_at`,
+        `${l} checked_by`,
+        `${l} method`,
+        ...(hasPaidDays ? [`${l} paid`, `${l} paid_to`] : []),
+      ];
     }),
   ];
   const lines = [csvLine(header)];
@@ -76,9 +94,14 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
         a.short_code,
         a.email_status,
         tunisDateTime(a.created_at),
+        ...(hasPaidDays ? [a.member_until ?? ""] : []),
         ...days.flatMap((d) => {
           const c = map.get(`${a.id}|${d.id}`);
-          return c ? [tunisDateTime(c.checked_at), c.checked_by, c.method] : ["", "", ""];
+          const p = paid.get(`${a.id}|${d.id}`);
+          return [
+            ...(c ? [tunisDateTime(c.checked_at), c.checked_by, c.method] : ["", "", ""]),
+            ...(hasPaidDays ? (p ? [`${p.kind} ${p.amount} DT`, p.paid_to] : ["", ""]) : []),
+          ];
         }),
       ]),
     );

@@ -12,11 +12,14 @@ function esc(s: string | null | undefined): string {
  */
 export async function buildBackupHtml(event: EventRow): Promise<{ html: string; rows: number }> {
   const days = await getEventDays(event.id);
-  const r = await query<{ full_name: string; class_year: string | null; team_name: string | null; short_code: string; source: string }>(
-    `select full_name, class_year, team_name, short_code, source
-       from attendees where event_id = $1 order by lower(full_name), created_at`,
+  const r = await query<{ full_name: string; class_year: string | null; team_name: string | null; short_code: string; source: string; member: boolean }>(
+    `select a.full_name, a.class_year, a.team_name, a.short_code, a.source,
+            exists (select 1 from members m where m.valid_until >= current_date
+                      and (m.id = a.member_id or (a.email is not null and m.email = a.email))) as member
+       from attendees a where a.event_id = $1 order by lower(a.full_name), a.created_at`,
     [event.id],
   );
+  const paidEvent = days.some((d) => d.access !== "free");
   const dayHeads = days.map((d) => `<th class="tick">${esc(dayLabel(d))}<br><small>${esc(d.day_date)}</small></th>`).join("");
   const rows = r.rows
     .map(
@@ -26,6 +29,7 @@ export async function buildBackupHtml(event: EventRow): Promise<{ html: string; 
   <td>${esc(a.class_year)}</td>
   <td>${esc(a.team_name)}</td>
   <td class="code">${esc(a.short_code)}</td>
+  ${paidEvent ? `<td class="tick">${a.member ? "✓" : ""}</td>` : ""}
   ${days.map(() => '<td class="tick"><span class="box"></span></td>').join("")}
 </tr>`,
     )
@@ -64,7 +68,7 @@ export async function buildBackupHtml(event: EventRow): Promise<{ html: string; 
 <p class="meta">${days.map((d) => esc(`${dayLabel(d)}: ${prettyDate(d.day_date)}`)).join(" · ")}${event.location ? " · " + esc(event.location) : ""}<br>
 ${r.rows.length} attendees · generated ${esc(tunisDateTime(new Date()))} (Africa/Tunis)</p>
 <table>
-<thead><tr><th>#</th><th>Name</th><th>Class</th><th>Team</th><th>Code</th>${dayHeads}</tr></thead>
+<thead><tr><th>#</th><th>Name</th><th>Class</th><th>Team</th><th>Code</th>${paidEvent ? '<th class="tick">Member</th>' : ""}${dayHeads}</tr></thead>
 <tbody>
 ${rows}
 </tbody></table>

@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { BookOpen, Check, FileSpreadsheet, History, Printer, ScanLine, Search, Settings, UserPlus } from "lucide-react";
+import { Banknote, BookOpen, Check, FileSpreadsheet, History, Printer, ScanLine, Search, Settings, UserPlus } from "lucide-react";
 import { useApp } from "@/components/AppContext";
 import { api } from "@/components/api";
 import { useStats } from "@/components/useStats";
 import { DayPicker } from "@/components/DayPicker";
 import { IconTile, Initials, Notice, OfflineBanner, Row, Section, Sheet, SheetAction, Spinner, btn } from "@/components/ui";
-import { dayName } from "@/components/types";
+import { accessLabel, dayName } from "@/components/types";
 
 const ic = "h-[17px] w-[17px]";
 
@@ -97,6 +97,9 @@ export default function Home() {
                   <Stat label="Email issues" value={stats.emails.failed} warn={stats.emails.failed > 0} />
                 </dl>
               )}
+              {activeDay && activeDay.access !== "free" && (
+                <p className="t-subhead mt-4 rounded-[10px] bg-sys-blue/15 px-3 py-2 font-semibold text-sys-blue">Today: {accessLabel(activeDay, event.membership_fee)}</p>
+              )}
               {stats && stats.days.length > 1 && (
                 <p className="t-footnote mt-3 text-label2">{stats.days.map((d) => `${d.label}: ${d.checked_in}`).join("  ·  ")}</p>
               )}
@@ -116,6 +119,9 @@ export default function Home() {
               <Row href="/search" icon={<IconTile color="bg-sys-blue"><Search className={ic} strokeWidth={2.4} /></IconTile>} title="Search" chevron />
               <Row href="/walkin" icon={<IconTile color="bg-sys-green"><UserPlus className={ic} strokeWidth={2.4} /></IconTile>} title="Walk-in" chevron />
               <Row href="/recent" icon={<IconTile color="bg-sys-orange"><History className={ic} strokeWidth={2.4} /></IconTile>} title="My Check-ins" chevron />
+              {event.days.some((d) => d.access !== "free") && (
+                <Row href="/cash" icon={<IconTile color="bg-[#34c759]"><Banknote className={ic} strokeWidth={2.2} /></IconTile>} title="Cash" subtitle="Payments taken at the desk" chevron />
+              )}
             </Section>
 
             <Section header="Exports" inset={60}>

@@ -5,6 +5,8 @@ import { requireEnv, optionalEnv } from "./env";
 pg.types.setTypeParser(1082, (v: string) => v);
 // bigint (audit_log.id, count(*)) as number — values stay far below 2^53.
 pg.types.setTypeParser(20, (v: string) => Number(v));
+// numeric (DT amounts) as number — always small, 2 decimals.
+pg.types.setTypeParser(1700, (v: string) => Number(v));
 
 type PoolGlobal = { __ctPool?: pg.Pool };
 const g = globalThis as PoolGlobal;

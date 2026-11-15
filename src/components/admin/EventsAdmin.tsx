@@ -3,13 +3,56 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, Copy, Eye, EyeOff, FileSpreadsheet, Plus, Printer, Trash2 } from "lucide-react";
 import { api, errorMessage } from "../api";
-import { Button, FieldRow, IconTile, Notice, Row, Section, Sheet, SheetAction, Spinner, TextField, Toggle } from "../ui";
+import { Button, FieldRow, IconTile, MenuSelect, Notice, Row, Section, Sheet, SheetAction, Spinner, TextField, Toggle } from "../ui";
+import type { DayAccess } from "../types";
+
+const ACCESS_OPTIONS: { value: DayAccess; label: string }[] = [
+  { value: "free", label: "Free for everyone" },
+  { value: "members", label: "Members only" },
+  { value: "members_or_fee", label: "Members free, others pay" },
+];
+
+/** Entry rule + fee editor shown under a day's date. */
+function AccessEditor({
+  access,
+  fee,
+  onAccess,
+  onFee,
+  id,
+}: {
+  access: DayAccess;
+  fee: string;
+  onAccess: (a: DayAccess) => void;
+  onFee: (f: string) => void;
+  id: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 pb-2.5 pl-1">
+      <MenuSelect label="Entry rule" value={access} onChange={(v) => onAccess(v as DayAccess)} options={ACCESS_OPTIONS} />
+      {access === "members_or_fee" && (
+        <label htmlFor={id} className="flex items-center gap-1 t-subhead text-label2">
+          Fee
+          <input
+            id={id}
+            value={fee}
+            inputMode="decimal"
+            onChange={(e) => onFee(e.target.value.replace(/[^0-9.]/g, ""))}
+            className="w-12 rounded-[8px] bg-fill px-2 py-1 text-right t-subhead text-label outline-none"
+          />
+          DT
+        </label>
+      )}
+    </div>
+  );
+}
 import { useApp } from "../AppContext";
 
 interface AdminDay {
   id: string;
   day_date: string;
   label: string | null;
+  access: DayAccess;
+  entry_fee: number;
   checkins: number;
 }
 interface AdminEvent {
@@ -20,6 +63,7 @@ interface AdminEvent {
   form_secret: string;
   is_active: boolean;
   created_at: string;
+  membership_fee: number;
   days: AdminDay[];
   attendees: number;
 }
@@ -108,9 +152,11 @@ const autoSlug = (name: string) =>
     .slice(0, 60);
 
 function CreateEvent({ onCancel, onCreated }: { onCancel: () => void; onCreated: (id: string) => Promise<void> }) {
-  const [f, setF] = useState({ name: "", slug: "", location: "" });
+  const [f, setF] = useState({ name: "", slug: "", location: "", membership_fee: "15" });
   const [slugTouched, setSlugTouched] = useState(false);
-  const [days, setDays] = useState<{ day_date: string; label: string }[]>([{ day_date: "", label: "Day 1" }]);
+  const [days, setDays] = useState<{ day_date: string; label: string; access: DayAccess; entry_fee: string }[]>([
+    { day_date: "", label: "Day 1", access: "free", entry_fee: "5" },
+  ]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -159,11 +205,18 @@ function CreateEvent({ onCancel, onCreated }: { onCancel: () => void; onCreated:
         <FieldRow label="Location" htmlFor="ne-loc">
           <TextField id="ne-loc" value={f.location} placeholder="ISSAT Sousse" onChange={(e) => setF((s) => ({ ...s, location: e.target.value }))} />
         </FieldRow>
+        <FieldRow label="Membership" htmlFor="ne-fee">
+          <span className="flex items-center gap-1">
+            <TextField id="ne-fee" value={f.membership_fee} inputMode="decimal" className="w-16" onChange={(e) => setF((s) => ({ ...s, membership_fee: e.target.value.replace(/[^0-9.]/g, "") }))} />
+            <span className="t-body text-label2">DT, offered on paid days</span>
+          </span>
+        </FieldRow>
       </Section>
 
-      <Section header="Days">
+      <Section header="Days" footer="Entry rule per day. Example bootcamp: sessions are Members only, the competition is Members free, others pay 5 DT.">
         {days.map((d, i) => (
-          <div key={i} className="flex items-center gap-2 px-4">
+          <div key={i} className="px-4">
+          <div className="flex items-center gap-2">
             <TextField
               aria-label={`Day ${i + 1} date`}
               type="date"
@@ -184,8 +237,20 @@ function CreateEvent({ onCancel, onCreated }: { onCancel: () => void; onCreated:
               </button>
             )}
           </div>
+          <AccessEditor
+            id={`ne-day-fee-${i}`}
+            access={d.access}
+            fee={d.entry_fee}
+            onAccess={(a) => setDays((ds) => ds.map((x, j) => (j === i ? { ...x, access: a } : x)))}
+            onFee={(v) => setDays((ds) => ds.map((x, j) => (j === i ? { ...x, entry_fee: v } : x)))}
+          />
+          </div>
         ))}
-        <Row title="Add Day" accent onClick={() => setDays((ds) => [...ds, { day_date: "", label: `Day ${ds.length + 1}` }])} />
+        <Row
+          title="Add Day"
+          accent
+          onClick={() => setDays((ds) => [...ds, { day_date: "", label: `Day ${ds.length + 1}`, access: ds[ds.length - 1]?.access ?? "free", entry_fee: "5" }])}
+        />
       </Section>
 
       {error && <Notice tone="error">{error}</Notice>}
@@ -238,13 +303,14 @@ function PropRow({ name, value, secret }: { name: string; value: string; secret?
 }
 
 function EventDetail({ ev, onBack, onChange }: { ev: AdminEvent; onBack: () => void; onChange: () => Promise<void> }) {
-  const [f, setF] = useState({ name: ev.name, slug: ev.slug, location: ev.location ?? "" });
+  const [f, setF] = useState({ name: ev.name, slug: ev.slug, location: ev.location ?? "", membership_fee: String(ev.membership_fee) });
   const [newDay, setNewDay] = useState({ day_date: "", label: "" });
   const [msg, setMsg] = useState<Msg>(null);
   const [busy, setBusy] = useState(false);
   const [confirmRegen, setConfirmRegen] = useState(false);
   const apiUrl = typeof window !== "undefined" ? `${window.location.origin}/api/form-submit` : "/api/form-submit";
-  const dirty = f.name !== ev.name || f.slug !== ev.slug || f.location !== (ev.location ?? "");
+  const dirty =
+    f.name !== ev.name || f.slug !== ev.slug || f.location !== (ev.location ?? "") || Number(f.membership_fee) !== Number(ev.membership_fee);
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true);
@@ -279,6 +345,12 @@ function EventDetail({ ev, onBack, onChange }: { ev: AdminEvent; onBack: () => v
         <FieldRow label="Location" htmlFor="ed-loc">
           <TextField id="ed-loc" value={f.location} onChange={(e) => setF((s) => ({ ...s, location: e.target.value }))} />
         </FieldRow>
+        <FieldRow label="Membership" htmlFor="ed-fee">
+          <span className="flex items-center gap-1">
+            <TextField id="ed-fee" value={f.membership_fee} inputMode="decimal" className="w-16" onChange={(e) => setF((s) => ({ ...s, membership_fee: e.target.value.replace(/[^0-9.]/g, "") }))} />
+            <span className="t-body text-label2">DT</span>
+          </span>
+        </FieldRow>
         {dirty && <Row title="Save Changes" accent disabled={busy} onClick={() => run(() => api(`/api/admin/events/${ev.id}`, { method: "PATCH", body: f }), "Saved.")} />}
       </Section>
 
@@ -296,7 +368,7 @@ function EventDetail({ ev, onBack, onChange }: { ev: AdminEvent; onBack: () => v
         />
       </Section>
 
-      <Section header="Days" footer="A day with check-ins can't be deleted.">
+      <Section header="Days" footer="Each day has an entry rule. A day with check-ins can't be deleted.">
         {ev.days.map((d) => (
           <DayRow key={d.id} eventId={ev.id} day={d} run={run} busy={busy} />
         ))}
@@ -403,9 +475,12 @@ function DayRow({
 }) {
   const [label, setLabel] = useState(day.label ?? "");
   const [date, setDate] = useState(day.day_date);
-  const dirty = label !== (day.label ?? "") || date !== day.day_date;
+  const [access, setAccess] = useState<DayAccess>(day.access);
+  const [fee, setFee] = useState(String(day.entry_fee));
+  const dirty = label !== (day.label ?? "") || date !== day.day_date || access !== day.access || Number(fee) !== Number(day.entry_fee);
   return (
-    <div className="flex items-center gap-2 px-4">
+    <div className="px-4">
+    <div className="flex items-center gap-2">
       <TextField aria-label="Date" type="date" className="w-auto flex-1" value={date} onChange={(e) => setDate(e.target.value)} />
       <TextField aria-label="Label" className="w-24 text-right" value={label} onChange={(e) => setLabel(e.target.value)} />
       {dirty ? (
@@ -413,7 +488,9 @@ function DayRow({
           size="small"
           variant="tinted"
           disabled={busy}
-          onClick={() => run(() => api(`/api/admin/events/${eventId}/days/${day.id}`, { method: "PATCH", body: { label, day_date: date } }), "Day saved.")}
+          onClick={() =>
+            run(() => api(`/api/admin/events/${eventId}/days/${day.id}`, { method: "PATCH", body: { label, day_date: date, access, entry_fee: fee || 0 } }), "Day saved.")
+          }
         >
           Save
         </Button>
@@ -430,6 +507,8 @@ function DayRow({
           <Trash2 className="h-[18px] w-[18px]" />
         </button>
       )}
+    </div>
+    <AccessEditor id={`day-fee-${day.id}`} access={access} fee={fee} onAccess={setAccess} onFee={setFee} />
     </div>
   );
 }

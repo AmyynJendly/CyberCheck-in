@@ -3,7 +3,8 @@ import { query, withTransaction, isUniqueViolation } from "./db";
 import { audit } from "./audit";
 import { HttpError } from "./http";
 import { newQrToken, newShortCode } from "./ids";
-import { insertCheckinTx } from "./checkin";
+import { hasFreeAccess, insertCheckinTx, insertPaymentTx, paymentOptions, type PaymentKind, type PaymentOption } from "./checkin";
+import { grantMembershipTx } from "./members";
 import { dayLabel, requireEvent, resolveEventDay } from "./events";
 import { cleanText, looksLikeEmail, normalizeEmail } from "./validate";
 import type { Staff } from "./auth";
@@ -132,24 +133,42 @@ export type WalkInResult =
       short_code: string;
       day_label: string;
       email_queued: boolean;
+      is_member: boolean;
+      payment: { kind: PaymentKind; amount: number } | null;
     }
   | { status: "NO_EVENT_DAY" }
+  | { status: "PAYMENT_REQUIRED"; name: string; day_label: string; options: PaymentOption[] }
   | { status: "EMAIL_EXISTS"; attendee_id: string; name: string };
 
+/**
+ * Create a walk-in and check them in for today, in one transaction. On a paid
+ * day a non-member first gets PAYMENT_REQUIRED (nothing is created); calling
+ * again with `payment` records the cash, the membership if any, and the check-in.
+ */
 export async function createWalkIn(opts: {
   eventId: string;
   staff: Staff;
   fields: AttendeeFields;
+  payment?: PaymentKind | null;
   overrideDayId?: string | null;
   now?: Date;
 }): Promise<WalkInResult> {
   const { eventId, staff, fields } = opts;
-  await requireEvent(eventId, { active: true });
+  const event = await requireEvent(eventId, { active: true });
   if (fields.email && !looksLikeEmail(fields.email)) {
     throw new HttpError(400, "BAD_EMAIL", "That email address doesn't look right.");
   }
   const day = await resolveEventDay(eventId, opts);
   if (!day) return { status: "NO_EVENT_DAY" };
+
+  const access = await hasFreeAccess({ email: fields.email, phone: fields.phone }, day);
+  let option: PaymentOption | null = null;
+  if (!access.ok) {
+    const options = paymentOptions(day, event.membership_fee);
+    if (!opts.payment) return { status: "PAYMENT_REQUIRED", name: fields.full_name, day_label: dayLabel(day), options };
+    option = options.find((o) => o.kind === opts.payment) ?? null;
+    if (!option) throw new HttpError(400, "PAYMENT_NOT_ALLOWED", "That payment isn't offered on this day.");
+  }
 
   try {
     return await withTransaction(async (c) => {
@@ -158,10 +177,10 @@ export async function createWalkIn(opts: {
           const r = await c.query<{ id: string; short_code: string }>(
             `insert into attendees
                (event_id, full_name, email, phone, class_year, team_name, source,
-                added_by_staff_id, qr_token, short_code, email_status)
-             values ($1, $2, $3, $4, $5, $6, 'walk_in', $7, $8, $9, $10)
+                added_by_staff_id, qr_token, short_code, email_status, member_id)
+             values ($1, $2, $3, $4, $5, $6, 'walk_in', $7, $8, $9, $10, $11)
              returning id, short_code`,
-            [eventId, fields.full_name, fields.email, fields.phone, fields.class_year, fields.team_name, staff.id, qrToken, shortCode, fields.email ? "pending" : "none"],
+            [eventId, fields.full_name, fields.email, fields.phone, fields.class_year, fields.team_name, staff.id, qrToken, shortCode, fields.email ? "pending" : "none", access.memberId],
           );
           return r.rows[0];
         } catch (err) {
@@ -170,6 +189,16 @@ export async function createWalkIn(opts: {
         }
       });
       const ci = await insertCheckinTx(c, { attendeeId: a.id, eventId, day, staff, method: "walk_in" });
+      let isMember = !!access.memberId;
+      if (option) {
+        let memberId: string | null = null;
+        if (option.kind === "membership") {
+          memberId = await grantMembershipTx(c, { fullName: fields.full_name, email: fields.email, phone: fields.phone, staff });
+          await c.query("update attendees set member_id = $2 where id = $1", [a.id, memberId]);
+          isMember = true;
+        }
+        await insertPaymentTx(c, { eventId, day, attendeeId: a.id, staff, option, memberId });
+      }
       return {
         status: "OK" as const,
         attendee_id: a.id,
@@ -178,6 +207,8 @@ export async function createWalkIn(opts: {
         short_code: a.short_code,
         day_label: dayLabel(day),
         email_queued: !!fields.email,
+        is_member: isMember,
+        payment: option ? { kind: option.kind, amount: option.amount } : null,
       };
     });
   } catch (err) {
@@ -208,6 +239,8 @@ export interface SearchRow {
   checkin_id: string | null;
   checked_at: string | null;
   checked_by: string | null;
+  member_id: string | null;
+  member_valid_until: string | null;
 }
 
 export async function searchAttendees(eventId: string, q: string, dayId: string | null): Promise<SearchRow[]> {
@@ -218,10 +251,18 @@ export async function searchAttendees(eventId: string, q: string, dayId: string 
   const r = await query<SearchRow>(
     `select a.id, a.full_name, a.email, a.phone, a.class_year, a.team_name, a.short_code, a.source,
             a.email_status, a.email_error,
-            c.id as checkin_id, c.checked_at, s.name as checked_by
+            c.id as checkin_id, c.checked_at, s.name as checked_by,
+            m.id as member_id, m.valid_until as member_valid_until
        from attendees a
        left join checkins c on c.attendee_id = a.id and c.event_day_id = $3 and c.undone_at is null
        left join staff s on s.id = c.staff_id
+       left join lateral (
+         select id, valid_until from members m
+          where m.valid_until >= current_date
+            and (m.id = a.member_id or (a.email is not null and m.email = a.email)
+                 or (m.phone_key is not null and m.phone_key = right(regexp_replace(coalesce(a.phone, ''), '\\D', '', 'g'), 8)))
+          order by (m.id = a.member_id) desc nulls last limit 1
+       ) m on true
       where a.event_id = $1
         and (a.full_name ilike $2 or a.email ilike $2 or a.phone ilike $2 or a.team_name ilike $2
              or a.short_code = upper($4)

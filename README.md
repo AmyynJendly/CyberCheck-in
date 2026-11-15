@@ -65,7 +65,7 @@ curl -X POST http://localhost:3000/api/form-submit \
 
 ```bash
 docker compose up -d db
-npm test            # 42 tests, against the cybertrace_test database (recreated on each run)
+npm test            # 56 tests, against the cybertrace_test database (recreated on each run)
 npm run typecheck
 npm run build
 ```
@@ -166,6 +166,25 @@ Do this once per event.
 
 ---
 
+## Paid days and membership (bootcamp format)
+
+Each event day has an **entry rule**, set in Admin → Events → (event) → Days:
+
+| Rule | Who gets in free | Everyone else |
+|---|---|---|
+| Free for everyone | everyone | — |
+| Members only | club members | must **join the club** (the event's membership fee, 15 DT by default) |
+| Members free, others pay | club members | pay the day's **entry fee** (5 DT by default), or join the club |
+
+Example, the bootcamp: Session 1 *Free for everyone*; Sessions 2–4 *Members only*; Competition *Members free, others pay*, 5 DT.
+
+- **Member list** (Admin → Members): copy the rows from Excel or Google Sheets, including the header row (name, email, phone; French headers like *Nom et prénom*, *Téléphone* work too), and paste them. Press **Preview**, check the rows, then **Import**. Importing again updates people instead of duplicating them. For screenshots of a list, give them to Claude to turn into rows you can paste.
+- **Who counts as a member:** someone on the list whose membership hasn't expired, matched by **email**, or by **phone** (last 8 digits). If a person registered with a different email, HR can use Search → *Member? Find on List* to link them by hand.
+- **Membership lasts the academic year:** it ends on 31 August by default (you can change the date when importing). Joining at the desk makes someone a member until then, so every later day, including the competition, is free.
+- **At the door:** a non-member on a paid day gets a blue **Payment needed** screen (scanner, Search and Walk-in all work the same). HR takes the cash first, then taps **Paid 15 DT · Join the club** or **Paid 5 DT · Entry only**. The payment and the check-in are saved together, in one database transaction, under that staff member's name. If they don't pay, they aren't checked in.
+- **Cash** (home screen → Cash): what each staff member collected, today or for all days, and every payment. Only admins can cancel a payment entered by mistake (tap it). A membership bought with a cancelled payment is removed too. The check-in stays; undo it separately if needed.
+- **Exports:** the CSV adds `member_until` plus `paid` / `paid_to` columns per day; the backup list adds a *Member* column. The QR email explains each day's rule.
+
 ## Design
 
 The interface follows Apple's dark-mode design language: the system font (SF Pro on iPhone and Mac; Roboto or Segoe UI elsewhere), iOS system colors, grouped inset lists, translucent bars, a passcode-style PIN pad and bottom sheets for confirmations. Icons are [Lucide](https://lucide.dev).
@@ -198,4 +217,5 @@ The interface follows Apple's dark-mode design language: the system font (SF Pro
 7. **CSV** has the required columns plus `short_code`, `email_status`, `registered_at` and a per-day `method` column. Times are Africa/Tunis. The file has a UTF-8 BOM so Excel shows accents and Arabic correctly, and cells that look like spreadsheet formulas are neutralised.
 8. **Session cookie `Secure` flag** is dropped only when `APP_BASE_URL` starts with `http://` (local development over plain http). On Vercel it is always set.
 9. **Added `DEV_EMAIL_MODE`, `DEV_EMAIL_DIR`, `DATABASE_SSL`, `DATABASE_CA_CERT`, `PG_POOL_MAX`** environment variables.
-10. **Service worker** (`public/sw.js`) is registered but does no caching. v1 is online-only by design, and the worker is the hook for the v2 offline queue.
+10. **Membership and paid entry** (not in the original spec; added for the bootcamp): `members` and `payments` tables, `event_days.access` / `entry_fee` and `events.membership_fee` columns (migration `002_membership_payments.sql`), routes `POST /api/checkin/pay`, `GET /api/events/:id/payments`, `POST /api/admin/payments/:id/void`, `/api/admin/members` (+ `/import`, `/:id`), `GET /api/members/search`, `POST /api/attendees/:id/member`, and a new scan result `PAYMENT_REQUIRED`. The QR code itself is unchanged: one code per person, once per day.
+11. **Service worker** (`public/sw.js`) is registered but does no caching. v1 is online-only by design, and the worker is the hook for the v2 offline queue.

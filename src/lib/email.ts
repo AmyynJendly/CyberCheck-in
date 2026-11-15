@@ -21,8 +21,25 @@ export interface EmailContext {
   fullName: string;
   eventName: string;
   location: string | null;
-  days: { day_date: string; label: string | null }[];
+  days: { day_date: string; label: string | null; access?: string; entry_fee?: number }[];
   shortCode: string;
+  membershipFee?: number;
+}
+
+export const fmtDT = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(2)} DT`;
+
+/** One line per day explaining who gets in free. Empty when every day is free. */
+export function accessLines(ctx: Pick<EmailContext, "days" | "membershipFee">): string[] {
+  if (!ctx.days.some((d) => d.access && d.access !== "free")) return [];
+  const fee = fmtDT(ctx.membershipFee ?? 15);
+  const lines = ctx.days.map((d) => {
+    const name = d.label || prettyDate(d.day_date);
+    if (d.access === "members") return `${name}: club members only. Not a member? Join at the desk for ${fee}.`;
+    if (d.access === "members_or_fee") return `${name}: free for club members, ${fmtDT(d.entry_fee ?? 5)} for everyone else.`;
+    return `${name}: free for everyone.`;
+  });
+  lines.push(`Club membership costs ${fee}, is valid for the whole academic year, and makes every day free.`);
+  return lines;
 }
 
 function esc(s: string): string {
@@ -32,6 +49,7 @@ function esc(s: string): string {
 export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmail {
   const dates = ctx.days.map((d) => `${d.label ? d.label + " — " : ""}${prettyDate(d.day_date)}`);
   const subject = `Your check-in QR code — ${ctx.eventName}`;
+  const access = accessLines(ctx);
 
   const text = [
     `Hi ${ctx.fullName},`,
@@ -39,6 +57,7 @@ export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmai
     `You're registered for ${ctx.eventName}.`,
     dates.length ? `Date${dates.length > 1 ? "s" : ""}: ${dates.join("; ")}` : "",
     ctx.location ? `Location: ${ctx.location}` : "",
+    ...(access.length ? ["", "Entry:", ...access.map((l) => `- ${l}`)] : []),
     "",
     "Show the attached QR code (qr.png) at the entrance.",
     `If the QR doesn't work, give this code at the desk: ${ctx.shortCode}`,
@@ -61,6 +80,11 @@ export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmai
   <p style="font-size:16px;line-height:1.5;margin:0 0 12px">You're registered for <strong>${esc(ctx.eventName)}</strong>.</p>
   ${dates.length ? `<p style="font-size:15px;line-height:1.5;margin:0 0 4px"><strong>When:</strong> ${dates.map(esc).join("<br>")}</p>` : ""}
   ${ctx.location ? `<p style="font-size:15px;line-height:1.5;margin:0 0 4px"><strong>Where:</strong> ${esc(ctx.location)}</p>` : ""}
+  ${
+    access.length
+      ? `<div style="background:#f2f2f7;border-radius:10px;padding:12px 14px;margin:14px 0 0"><p style="font-size:14px;font-weight:bold;margin:0 0 6px">Entry</p><ul style="font-size:14px;line-height:1.5;margin:0;padding-left:18px">${access.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>`
+      : ""
+  }
   <p style="font-size:15px;line-height:1.5;margin:16px 0 8px">Show this QR code at the entrance:</p>
   <p style="text-align:center;margin:0 0 16px"><img src="cid:qr" alt="Your check-in QR code" width="260" height="260" style="width:260px;height:260px;border:1px solid #e5e7eb;border-radius:8px"></p>
   <p style="font-size:15px;line-height:1.5;margin:0 0 6px">If the QR doesn't work, give this code at the desk:</p>
@@ -173,8 +197,9 @@ export async function sendAttendeeEmail(attendeeId: string, opts: { reason: Send
     short_code: string;
     event_name: string;
     location: string | null;
+    membership_fee: number;
   }>(
-    `select a.id, a.event_id, a.full_name, a.email, a.qr_token, a.short_code, e.name as event_name, e.location
+    `select a.id, a.event_id, a.full_name, a.email, a.qr_token, a.short_code, e.name as event_name, e.location, e.membership_fee
        from attendees a join events e on e.id = a.event_id where a.id = $1`,
     [attendeeId],
   );
@@ -196,14 +221,14 @@ export async function sendAttendeeEmail(attendeeId: string, opts: { reason: Send
   if (!looksLikeEmail(a.email)) return fail("Invalid email address.");
 
   try {
-    const days = await query<{ day_date: string; label: string | null }>(
-      "select day_date, label from event_days where event_id = $1 order by day_date",
+    const days = await query<{ day_date: string; label: string | null; access: string; entry_fee: number }>(
+      "select day_date, label, access, entry_fee from event_days where event_id = $1 order by day_date",
       [a.event_id],
     );
     const png = await qrPng(a.qr_token);
     const msg = buildQrEmail(
       a.email,
-      { fullName: a.full_name, eventName: a.event_name, location: a.location, days: days.rows, shortCode: a.short_code },
+      { fullName: a.full_name, eventName: a.event_name, location: a.location, days: days.rows, shortCode: a.short_code, membershipFee: a.membership_fee },
       png,
     );
     await deliver(msg);
