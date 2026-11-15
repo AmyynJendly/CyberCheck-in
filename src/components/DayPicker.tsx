@@ -1,7 +1,8 @@
 "use client";
 
+import { CalendarDays } from "lucide-react";
 import { useApp } from "./AppContext";
-import { Notice } from "./ui";
+import { IconTile, MenuSelect, Notice, Row, Section } from "./ui";
 import { dayName } from "./types";
 
 /** Admin-only: choose which event day check-ins count for (used when today is not an event day). */
@@ -10,20 +11,26 @@ export function DayPicker() {
   if (!event || me?.role !== "admin") return null;
   if (!event.days.length) return <Notice tone="warn">This event has no days yet. Add them in Admin.</Notice>;
   return (
-    <label className="block text-sm">
-      <span className="mb-1 block text-slate-400">Admin: check-ins count for</span>
-      <select
-        className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-base"
-        value={dayOverrideId ?? ""}
-        onChange={(e) => setDayOverride(e.target.value || null)}
-      >
-        <option value="">{event.today_day_id ? "Today (automatic)" : `Today ${today} — not an event day`}</option>
-        {event.days.map((d) => (
-          <option key={d.id} value={d.id}>
-            {dayName(d)} ({d.day_date})
-          </option>
-        ))}
-      </select>
-    </label>
+    <Section inset={60} footer="Admins only. Use this when today isn't an event day. It resets tomorrow.">
+      <Row
+        icon={
+          <IconTile color="bg-sys-indigo">
+            <CalendarDays className="h-[17px] w-[17px]" strokeWidth={2.2} />
+          </IconTile>
+        }
+        title="Counting day"
+        trailing={
+          <MenuSelect
+            label="Counting day"
+            value={dayOverrideId ?? ""}
+            onChange={(v) => setDayOverride(v || null)}
+            options={[
+              { value: "", label: event.today_day_id ? "Today" : `Today (${today}) · none` },
+              ...event.days.map((d) => ({ value: d.id, label: `${dayName(d)} · ${d.day_date}` })),
+            ]}
+          />
+        }
+      />
+    </Section>
   );
 }

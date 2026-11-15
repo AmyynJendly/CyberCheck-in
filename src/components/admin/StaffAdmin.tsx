@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { Button, Card, Field, Notice, inputClass } from "../ui";
+import { Button, FieldRow, Initials, MenuSelect, Notice, Row, Section, Sheet, SheetAction, Spinner, TextField } from "../ui";
 import { useApp } from "../AppContext";
 
 interface StaffRow {
@@ -15,12 +15,17 @@ interface StaffRow {
   is_locked: boolean;
 }
 
+type Msg = { tone: "ok" | "error"; text: string } | null;
+
 export function StaffAdmin() {
   const { me } = useApp();
   const [staff, setStaff] = useState<StaffRow[] | null>(null);
-  const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [msg, setMsg] = useState<Msg>(null);
   const [f, setF] = useState({ name: "", pin: "", role: "hr" as "hr" | "admin" });
   const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState<StaffRow | null>(null);
+  const [pinFor, setPinFor] = useState<StaffRow | null>(null);
+  const [newPin, setNewPin] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -47,100 +52,153 @@ export function StaffAdmin() {
     }
   };
 
-  const patch = (s: StaffRow, body: Record<string, unknown>, ok: string) =>
-    run(() => api(`/api/admin/staff/${s.id}`, { method: "PATCH", body }), ok);
+  const patch = (s: StaffRow, body: Record<string, unknown>, ok: string) => {
+    setSelected(null);
+    return run(() => api(`/api/admin/staff/${s.id}`, { method: "PATCH", body }), ok);
+  };
+
+  const describe = (s: StaffRow) =>
+    [
+      s.role === "admin" ? "Admin" : "HR",
+      !s.is_active && "Deactivated",
+      s.is_locked && "Locked",
+      s.failed_attempts > 0 && `${s.failed_attempts} wrong PIN${s.failed_attempts > 1 ? "s" : ""}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-7">
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
-      <Card>
+
+      <form
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void run(async () => {
+            await api("/api/admin/staff", { body: f });
+            setF({ name: "", pin: "", role: "hr" });
+          }, "Added. Give them their PIN in person.");
+        }}
+      >
+        <Section header="Add Staff" footer="PINs are 6 digits. Share them in person, never in a group chat.">
+          <FieldRow label="Name" htmlFor="st-name">
+            <TextField id="st-name" value={f.name} required placeholder="Full name" onChange={(e) => setF((s) => ({ ...s, name: e.target.value }))} />
+          </FieldRow>
+          <FieldRow label="PIN" htmlFor="st-pin">
+            <TextField
+              id="st-pin"
+              value={f.pin}
+              required
+              inputMode="numeric"
+              pattern="\d{6}"
+              maxLength={6}
+              placeholder="6 digits"
+              className="font-mono tracking-[0.3em]"
+              onChange={(e) => setF((s) => ({ ...s, pin: e.target.value.replace(/\D/g, "") }))}
+            />
+          </FieldRow>
+          <Row
+            title="Role"
+            trailing={
+              <MenuSelect
+                label="Role"
+                value={f.role}
+                onChange={(v) => setF((s) => ({ ...s, role: v as "hr" | "admin" }))}
+                options={[
+                  { value: "hr", label: "HR" },
+                  { value: "admin", label: "Admin" },
+                ]}
+              />
+            }
+          />
+        </Section>
+        <Button type="submit" size="large" className="w-full" disabled={busy || !f.name.trim() || f.pin.length !== 6}>
+          Add Staff Member
+        </Button>
+      </form>
+
+      {staff === null && <Spinner />}
+      {staff && (
+        <Section header="Team" inset={68}>
+          {staff.map((s) => (
+            <Row
+              key={s.id}
+              icon={
+                <span className={s.is_active ? "" : "opacity-40"}>
+                  <Initials name={s.name} size={40} />
+                </span>
+              }
+              title={
+                <span className={s.is_active ? "" : "text-label2"}>
+                  {s.name}
+                  {s.id === me?.id && <span className="text-label2"> (you)</span>}
+                </span>
+              }
+              subtitle={<span className={s.is_locked ? "text-sys-orange" : ""}>{describe(s)}</span>}
+              chevron
+              onClick={() => setSelected(s)}
+            />
+          ))}
+        </Section>
+      )}
+
+      <Sheet open={!!selected} onClose={() => setSelected(null)} title={selected?.name} message={selected ? describe(selected) : undefined}>
+        {selected && (
+          <>
+            <SheetAction
+              onClick={() => {
+                setPinFor(selected);
+                setNewPin("");
+                setSelected(null);
+              }}
+            >
+              Reset PIN
+            </SheetAction>
+            {selected.is_locked && <SheetAction onClick={() => patch(selected, { unlock: true }, `${selected.name} unlocked.`)}>Unlock</SheetAction>}
+            {selected.id !== me?.id && (
+              <>
+                <SheetAction onClick={() => patch(selected, { role: selected.role === "admin" ? "hr" : "admin" }, "Role changed.")}>
+                  {selected.role === "admin" ? "Make HR" : "Make Admin"}
+                </SheetAction>
+                <SheetAction
+                  destructive={selected.is_active}
+                  onClick={() => patch(selected, { is_active: !selected.is_active }, selected.is_active ? `${selected.name} deactivated.` : `${selected.name} reactivated.`)}
+                >
+                  {selected.is_active ? "Deactivate" : "Reactivate"}
+                </SheetAction>
+              </>
+            )}
+          </>
+        )}
+      </Sheet>
+
+      <Sheet open={!!pinFor} onClose={() => setPinFor(null)} title={`New PIN for ${pinFor?.name}`} message="Their failed attempts and any lock are cleared.">
         <form
-          className="space-y-3"
+          className="border-t border-sep/60 px-4 py-3"
           onSubmit={(e) => {
             e.preventDefault();
-            void run(async () => {
-              await api("/api/admin/staff", { body: f });
-              setF({ name: "", pin: "", role: "hr" });
-            }, "Staff member added. Give them their PIN in person.");
+            if (!pinFor || newPin.length !== 6) return;
+            const s = pinFor;
+            setPinFor(null);
+            void run(() => api(`/api/admin/staff/${s.id}`, { method: "PATCH", body: { pin: newPin } }), `PIN reset for ${s.name}.`);
           }}
         >
-          <h3 className="text-lg font-bold">Add staff</h3>
-          <Field label="Name">
-            <input className={inputClass} value={f.name} required onChange={(e) => setF((s) => ({ ...s, name: e.target.value }))} />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="6-digit PIN">
-              <input
-                className={inputClass}
-                value={f.pin}
-                required
-                inputMode="numeric"
-                pattern="\d{6}"
-                maxLength={6}
-                onChange={(e) => setF((s) => ({ ...s, pin: e.target.value.replace(/\D/g, "") }))}
-              />
-            </Field>
-            <Field label="Role">
-              <select className={inputClass} value={f.role} onChange={(e) => setF((s) => ({ ...s, role: e.target.value as "hr" | "admin" }))}>
-                <option value="hr">HR</option>
-                <option value="admin">Admin</option>
-              </select>
-            </Field>
-          </div>
-          <Button type="submit" disabled={busy}>
-            Add
+          <TextField
+            aria-label="New 6-digit PIN"
+            value={newPin}
+            autoFocus
+            inputMode="numeric"
+            maxLength={6}
+            placeholder="6 digits"
+            className="rounded-[10px] bg-fill px-3 text-center font-mono tracking-[0.4em]"
+            onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+          />
+          <Button type="submit" size="large" className="mt-3 w-full" disabled={newPin.length !== 6}>
+            Set PIN
           </Button>
         </form>
-      </Card>
-
-      {staff?.map((s) => (
-        <Card key={s.id} className={s.is_active ? "" : "opacity-60"}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="font-bold">
-                {s.name} {s.id === me?.id && <span className="text-xs text-slate-400">(you)</span>}
-              </p>
-              <p className="text-xs text-slate-400">
-                {s.role}
-                {!s.is_active && " · deactivated"}
-                {s.is_locked && " · 🔒 locked"}
-                {s.failed_attempts > 0 && ` · ${s.failed_attempts} wrong PIN${s.failed_attempts > 1 ? "s" : ""}`}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                disabled={busy}
-                onClick={() => {
-                  const pin = prompt(`New 6-digit PIN for ${s.name}:`);
-                  if (pin) void patch(s, { pin: pin.trim() }, `PIN reset for ${s.name}.`);
-                }}
-              >
-                Reset PIN
-              </Button>
-              {s.is_locked && (
-                <Button variant="secondary" disabled={busy} onClick={() => patch(s, { unlock: true }, `${s.name} unlocked.`)}>
-                  Unlock
-                </Button>
-              )}
-              {s.id !== me?.id && (
-                <>
-                  <Button variant="secondary" disabled={busy} onClick={() => patch(s, { role: s.role === "admin" ? "hr" : "admin" }, "Role changed.")}>
-                    Make {s.role === "admin" ? "HR" : "admin"}
-                  </Button>
-                  <Button
-                    variant={s.is_active ? "danger" : "primary"}
-                    disabled={busy}
-                    onClick={() => patch(s, { is_active: !s.is_active }, s.is_active ? `${s.name} deactivated.` : `${s.name} reactivated.`)}
-                  >
-                    {s.is_active ? "Deactivate" : "Reactivate"}
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-        </Card>
-      ))}
+      </Sheet>
     </div>
   );
 }

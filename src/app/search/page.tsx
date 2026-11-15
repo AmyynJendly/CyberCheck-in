@@ -2,9 +2,10 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { CircleCheck } from "lucide-react";
 import { useApp, useDayParam } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
-import { Button, Card, NeedEvent, Notice, Page, fmtTime, inputClass } from "@/components/ui";
+import { Button, NeedEvent, Notice, Page, SearchField, Spinner, TextField, fmtTime } from "@/components/ui";
 
 interface Row {
   id: string;
@@ -23,6 +24,13 @@ interface Row {
 }
 
 type Msg = { tone: "ok" | "warn" | "error"; text: string };
+
+const EMAIL_STATUS: Record<Row["email_status"], { label: string; cls: string } | null> = {
+  sent: { label: "Sent", cls: "text-sys-green" },
+  failed: { label: "Failed", cls: "text-sys-red" },
+  pending: { label: "Sending", cls: "text-sys-orange" },
+  none: null,
+};
 
 function SearchInner() {
   const { event, activeDay } = useApp();
@@ -51,7 +59,7 @@ function SearchInner() {
         const r = await api<{ results: Row[] }>(`/api/attendees/search?${qs}`);
         if (my === seq.current) setRows(r.results);
       } catch {
-        /* banner */
+        /* offline banner */
       } finally {
         if (my === seq.current) setLoading(false);
       }
@@ -70,13 +78,11 @@ function SearchInner() {
     if (!event) return;
     setBusyId(row.id);
     try {
-      const r = await api<{ status: string; checked_at?: string; by_staff_name?: string; day_label?: string; other_event_name?: string }>(
-        "/api/checkin/manual",
-        { body: { attendee_id: row.id, event_id: event.id, ...dayParam } },
-      );
-      if (r.status === "OK") setMsg(row.id, { tone: "ok", text: `✓ Checked in (${r.day_label})` });
-      else if (r.status === "ALREADY_CHECKED_IN")
-        setMsg(row.id, { tone: "warn", text: `Already checked in at ${fmtTime(r.checked_at)} by ${r.by_staff_name}` });
+      const r = await api<{ status: string; checked_at?: string; by_staff_name?: string; day_label?: string }>("/api/checkin/manual", {
+        body: { attendee_id: row.id, event_id: event.id, ...dayParam },
+      });
+      if (r.status === "OK") setMsg(row.id, { tone: "ok", text: `Checked in for ${r.day_label}.` });
+      else if (r.status === "ALREADY_CHECKED_IN") setMsg(row.id, { tone: "warn", text: `Already checked in at ${fmtTime(r.checked_at)} by ${r.by_staff_name}.` });
       else if (r.status === "NO_EVENT_DAY") setMsg(row.id, { tone: "error", text: "No event day today." });
       else setMsg(row.id, { tone: "error", text: r.status });
       await runSearch(q);
@@ -94,7 +100,7 @@ function SearchInner() {
         body: email ? { email } : {},
         timeoutMs: 30_000,
       });
-      setMsg(row.id, r.ok ? { tone: "ok", text: `QR sent to ${r.email}` } : { tone: "error", text: `Email failed: ${r.error}` });
+      setMsg(row.id, r.ok ? { tone: "ok", text: `QR code sent to ${r.email}.` } : { tone: "error", text: `The email didn't send: ${r.error}` });
       setEditing(null);
       await runSearch(q);
     } catch (e) {
@@ -108,102 +114,119 @@ function SearchInner() {
 
   return (
     <>
-      <input
-        autoFocus
-        className={inputClass}
-        placeholder="Name, email, phone or 6-letter code"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        inputMode="search"
-        autoCapitalize="off"
-        autoCorrect="off"
-        spellCheck={false}
-      />
-      {!activeDay && <Notice tone="warn">No event day today — check-in is disabled (search still works).</Notice>}
-      {loading && <p className="text-sm text-slate-500">Searching…</p>}
-      {rows && rows.length === 0 && !loading && <p className="text-slate-400">No one found. Add them as a walk-in?</p>}
-      {rows?.map((r) => (
-        <Card key={r.id}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-lg font-bold">{r.full_name}</p>
-              <p className="text-sm text-slate-400">{[r.team_name, r.class_year].filter(Boolean).join(" · ") || "—"}</p>
-              <p className="break-words text-sm text-slate-400">
-                <span className="break-all">{r.email ?? "no email"}</span> <EmailBadge status={r.email_status} />
-                {r.phone && <span className="whitespace-nowrap"> · {r.phone}</span>}
-              </p>
-              {r.email_status === "failed" && r.email_error && <p className="text-xs text-red-300">{r.email_error}</p>}
-            </div>
-            <span className="rounded-lg bg-slate-950 px-2 py-1 font-mono text-sm tracking-widest">{r.short_code}</span>
-          </div>
+      <div className="-mt-3 space-y-3">
+        <SearchField value={q} onChange={setQ} placeholder="Name, email, phone or code" autoFocus />
+        {!activeDay && <Notice tone="warn">No event day today. You can search, but not check in.</Notice>}
+      </div>
 
-          {r.checkin_id ? (
-            <p className="mt-3 text-sm font-semibold text-emerald-300">
-              ✓ Checked in {fmtTime(r.checked_at)} by {r.checked_by}
-            </p>
-          ) : null}
+      {loading && !rows && <Spinner label="Searching" />}
+      {rows && rows.length === 0 && !loading && (
+        <div className="py-10 text-center">
+          <p className="t-title3">No Results</p>
+          <p className="t-subhead mt-1 text-label2">Check the spelling, or add them as a walk-in.</p>
+        </div>
+      )}
+      {!rows && !loading && (
+        <p className="t-subhead px-1 text-label2">Type at least two characters. Codes work in lowercase too.</p>
+      )}
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            {!r.checkin_id && activeDay && (
-              <Button big onClick={() => checkIn(r)} disabled={busyId === r.id} className="flex-1">
-                Check in
-              </Button>
-            )}
-            {r.email && (
-              <Button variant="secondary" onClick={() => resend(r)} disabled={busyId === r.id}>
-                Resend QR
-              </Button>
-            )}
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setEditing(editing === r.id ? null : r.id);
-                setEmailDraft(r.email ?? "");
-              }}
-            >
-              {r.email ? "Fix email" : "Add email"}
-            </Button>
-          </div>
+      <div className="space-y-3">
+        {rows?.map((r) => {
+          const status = EMAIL_STATUS[r.email_status];
+          return (
+            <article key={r.id} className="rounded-[14px] bg-bg2 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="t-headline">{r.full_name}</h2>
+                  <p className="t-subhead text-label2">{[r.team_name, r.class_year, r.source === "walk_in" ? "Walk-in" : null].filter(Boolean).join(" · ") || "No team or class"}</p>
+                </div>
+                <span className="shrink-0 rounded-[8px] bg-bg3 px-2 py-1 font-mono text-[15px] font-semibold tracking-[0.14em]">{r.short_code}</span>
+              </div>
 
-          {editing === r.id && (
-            <form
-              className="mt-3 flex gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void resend(r, emailDraft);
-              }}
-            >
-              <input className={inputClass} type="email" value={emailDraft} onChange={(e) => setEmailDraft(e.target.value)} placeholder="correct@email.com" />
-              <Button type="submit" disabled={busyId === r.id}>
-                Save & send
-              </Button>
-            </form>
-          )}
-          {msgs[r.id] && (
-            <div className="mt-3">
-              <Notice tone={msgs[r.id].tone}>{msgs[r.id].text}</Notice>
-            </div>
-          )}
-        </Card>
-      ))}
+              <dl className="t-footnote mt-3 space-y-1 text-label2">
+                <div className="flex gap-2">
+                  <dt className="w-12 shrink-0">Email</dt>
+                  <dd className="min-w-0 break-all">
+                    {r.email ?? "None"}
+                    {status && <span className={`ml-1.5 font-semibold ${status.cls}`}>{status.label}</span>}
+                  </dd>
+                </div>
+                {r.phone && (
+                  <div className="flex gap-2">
+                    <dt className="w-12 shrink-0">Phone</dt>
+                    <dd>{r.phone}</dd>
+                  </div>
+                )}
+                {r.email_status === "failed" && r.email_error && <p className="text-sys-red">{r.email_error}</p>}
+              </dl>
+
+              {r.checkin_id && (
+                <p className="t-subhead mt-3 flex items-center gap-1.5 font-semibold text-sys-green">
+                  <CircleCheck className="h-[18px] w-[18px]" strokeWidth={2.4} aria-hidden />
+                  Checked in at {fmtTime(r.checked_at)} by {r.checked_by}
+                </p>
+              )}
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {!r.checkin_id && activeDay && (
+                  <Button onClick={() => checkIn(r)} disabled={busyId === r.id} className="min-w-[120px] flex-1">
+                    Check In
+                  </Button>
+                )}
+                {r.email && (
+                  <Button variant="gray" onClick={() => resend(r)} disabled={busyId === r.id}>
+                    Resend QR
+                  </Button>
+                )}
+                <Button
+                  variant="gray"
+                  onClick={() => {
+                    setEditing(editing === r.id ? null : r.id);
+                    setEmailDraft(r.email ?? "");
+                  }}
+                >
+                  {r.email ? "Fix Email" : "Add Email"}
+                </Button>
+              </div>
+
+              {editing === r.id && (
+                <form
+                  className="mt-3 flex items-center gap-2 rounded-[10px] bg-bg3 pl-3 pr-1.5"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void resend(r, emailDraft);
+                  }}
+                >
+                  <TextField
+                    type="email"
+                    value={emailDraft}
+                    onChange={(e) => setEmailDraft(e.target.value)}
+                    placeholder="name@example.com"
+                    autoCapitalize="off"
+                    autoFocus
+                    aria-label="Corrected email"
+                  />
+                  <Button type="submit" size="small" disabled={busyId === r.id || !emailDraft.trim()}>
+                    Save & Send
+                  </Button>
+                </form>
+              )}
+              {msgs[r.id] && (
+                <div className="mt-3">
+                  <Notice tone={msgs[r.id].tone}>{msgs[r.id].text}</Notice>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
     </>
   );
 }
 
-function EmailBadge({ status }: { status: Row["email_status"] }) {
-  const map = {
-    sent: "text-emerald-400",
-    failed: "text-red-400",
-    pending: "text-amber-400",
-    none: "text-slate-500",
-  } as const;
-  if (status === "none") return null;
-  return <span className={`text-xs font-semibold ${map[status]}`}>({status})</span>;
-}
-
 export default function SearchPage() {
   return (
-    <Page title="Search">
+    <Page title="Search" showContext={false}>
       <Suspense>
         <SearchInner />
       </Suspense>

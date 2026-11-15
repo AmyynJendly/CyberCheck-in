@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { Button, Notice, fmtDateTime, inputClass } from "../ui";
+import { Button, MenuSelect, Notice, Row, Section, Spinner, fmtDateTime } from "../ui";
 import { useApp } from "../AppContext";
 
 interface Entry {
@@ -15,46 +15,64 @@ interface Entry {
   details: Record<string, unknown> | null;
 }
 
-const ACTIONS = [
-  "",
-  "login",
-  "login_failed",
-  "checkin",
-  "checkin_rejected",
-  "manual_checkin",
-  "walk_in",
-  "undo",
-  "resend",
-  "edit_email",
-  "email_sent",
-  "email_failed",
-  "form_submit",
-  "form_rejected",
-  "export",
-  "create_event",
-  "update_event",
-  "create_staff",
-  "update_staff",
-  "reset_pin",
-  "deactivate_staff",
-];
-
-const TONE: Record<string, string> = {
-  login_failed: "text-red-300",
-  checkin_rejected: "text-orange-300",
-  undo: "text-amber-300",
-  email_failed: "text-red-300",
-  form_rejected: "text-red-300",
-  checkin: "text-emerald-300",
-  manual_checkin: "text-emerald-300",
-  walk_in: "text-emerald-300",
+const LABELS: Record<string, string> = {
+  login: "Signed in",
+  login_failed: "Failed sign-in",
+  logout: "Signed out",
+  checkin: "Checked in (QR)",
+  checkin_rejected: "Scan rejected",
+  manual_checkin: "Checked in (manual)",
+  walk_in: "Walk-in",
+  undo: "Undid check-in",
+  resend: "Resent QR",
+  edit_email: "Fixed email",
+  email_sent: "Email sent",
+  email_failed: "Email failed",
+  retry_failed_emails: "Retried emails",
+  form_submit: "Form response",
+  form_rejected: "Form rejected",
+  export: "Exported CSV",
+  backup_list: "Opened backup list",
+  create_event: "Created event",
+  update_event: "Edited event",
+  regenerate_form_secret: "New form secret",
+  create_day: "Added day",
+  update_day: "Edited day",
+  delete_day: "Deleted day",
+  create_staff: "Added staff",
+  update_staff: "Edited staff",
+  reset_pin: "Reset PIN",
+  deactivate_staff: "Deactivated staff",
+  activate_staff: "Reactivated staff",
 };
+
+const DOT: Record<string, string> = {
+  login_failed: "bg-sys-red",
+  checkin_rejected: "bg-sys-orange",
+  undo: "bg-sys-orange",
+  email_failed: "bg-sys-red",
+  form_rejected: "bg-sys-red",
+  checkin: "bg-sys-green",
+  manual_checkin: "bg-sys-green",
+  walk_in: "bg-sys-green",
+};
+
+function summary(e: Entry): string | null {
+  const d = e.details ?? {};
+  if (e.action === "checkin_rejected" && typeof d.reason === "string") return d.reason.replace(/_/g, " ").toLowerCase();
+  if (e.action === "login_failed" && typeof d.reason === "string") return d.reason.replace(/_/g, " ");
+  if ((e.action === "email_sent" || e.action === "email_failed" || e.action === "resend") && typeof d.to === "string") return String(d.to);
+  if (e.action === "edit_email") return `${d.from ?? "none"} → ${d.to}`;
+  if (e.action === "form_submit" && typeof d.outcome === "string") return d.outcome.replace(/_/g, " ");
+  if (e.action === "export" && d.rows !== undefined) return `${d.rows} rows`;
+  return null;
+}
 
 export function AuditAdmin() {
   const { events } = useApp();
   const [eventId, setEventId] = useState("");
   const [action, setAction] = useState("");
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [entries, setEntries] = useState<Entry[] | null>(null);
   const [next, setNext] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,7 +84,7 @@ export function AuditAdmin() {
         if (action) qs.set("action", action);
         if (before) qs.set("before_id", String(before));
         const r = await api<{ entries: Entry[]; next_before_id: number | null }>(`/api/admin/audit?${qs}`);
-        setEntries((cur) => (before ? [...cur, ...r.entries] : r.entries));
+        setEntries((cur) => (before && cur ? [...cur, ...r.entries] : r.entries));
         setNext(r.next_before_id);
       } catch (e) {
         setError(errorMessage(e));
@@ -79,43 +97,54 @@ export function AuditAdmin() {
   }, [load]);
 
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2">
-        <select className={inputClass} value={eventId} onChange={(e) => setEventId(e.target.value)}>
-          <option value="">All events</option>
-          {events.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name}
-            </option>
-          ))}
-        </select>
-        <select className={inputClass} value={action} onChange={(e) => setAction(e.target.value)}>
-          {ACTIONS.map((a) => (
-            <option key={a} value={a}>
-              {a || "All actions"}
-            </option>
-          ))}
-        </select>
-      </div>
+    <div className="space-y-7">
+      <Section>
+        <Row
+          title="Event"
+          trailing={<MenuSelect label="Event" value={eventId} onChange={setEventId} options={[{ value: "", label: "All" }, ...events.map((e) => ({ value: e.id, label: e.name }))]} />}
+        />
+        <Row
+          title="Action"
+          trailing={
+            <MenuSelect
+              label="Action"
+              value={action}
+              onChange={setAction}
+              options={[{ value: "", label: "All" }, ...Object.entries(LABELS).map(([value, label]) => ({ value, label }))]}
+            />
+          }
+        />
+      </Section>
       {error && <Notice tone="error">{error}</Notice>}
-      <div className="divide-y divide-slate-800 rounded-2xl border border-slate-800">
-        {entries.map((e) => (
-          <div key={e.id} className="px-3 py-2 text-sm">
-            <div className="flex flex-wrap items-baseline gap-x-2">
-              <span className="font-mono text-xs text-slate-500">{fmtDateTime(e.at)}</span>
-              <span className={`font-semibold ${TONE[e.action] ?? ""}`}>{e.action}</span>
-              <span className="text-slate-300">{e.staff_name ?? "system"}</span>
-              {e.attendee_name && <span className="text-slate-400">→ {e.attendee_name}</span>}
-              {e.event_name && <span className="text-xs text-slate-500">({e.event_name})</span>}
-            </div>
-            {e.details && <p className="break-all font-mono text-xs text-slate-500">{JSON.stringify(e.details)}</p>}
-          </div>
-        ))}
-        {!entries.length && <p className="p-3 text-slate-400">No entries.</p>}
-      </div>
+      {entries === null && !error && <Spinner />}
+      {entries?.length === 0 && <p className="t-subhead py-6 text-center text-label2">No activity.</p>}
+      {entries && entries.length > 0 && (
+        <Section inset={34}>
+          {entries.map((e) => {
+            const extra = summary(e);
+            return (
+              <div key={e.id} className="flex gap-3 px-4 py-2.5">
+                <span className={`mt-[7px] h-2 w-2 shrink-0 rounded-full ${DOT[e.action] ?? "bg-label3"}`} aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="t-subhead font-semibold">{LABELS[e.action] ?? e.action}</p>
+                    <time className="t-caption shrink-0 tabular text-label2">{fmtDateTime(e.at)}</time>
+                  </div>
+                  <p className="t-footnote text-label2">
+                    {e.staff_name ?? "System"}
+                    {e.attendee_name && ` → ${e.attendee_name}`}
+                    {extra && ` · ${extra}`}
+                    {e.event_name && !eventId && ` · ${e.event_name}`}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </Section>
+      )}
       {next && (
-        <Button variant="secondary" onClick={() => load(next)}>
-          Load more
+        <Button variant="gray" className="w-full" onClick={() => load(next)}>
+          Load More
         </Button>
       )}
     </div>

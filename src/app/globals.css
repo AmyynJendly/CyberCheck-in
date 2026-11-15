@@ -1,36 +1,147 @@
 @import "tailwindcss";
 
-:root {
-  color-scheme: dark;
+/*
+ * Cybertrace check-in — Apple-style dark theme.
+ * Colors are iOS "dark appearance" system colors. --color-accent is the
+ * Cybertrace brand color: change it here (one line) to re-theme the app.
+ */
+@theme {
+  --color-accent: #40c8e0;
+  --color-on-accent: #001418;
+
+  --color-bg: #000000;
+  --color-bg2: #1c1c1e;
+  --color-bg3: #2c2c2e;
+  --color-bg4: #3a3a3c;
+
+  --color-label: #ffffff;
+  --color-label2: rgb(235 235 245 / 0.6);
+  --color-label3: rgb(235 235 245 / 0.3);
+  --color-sep: rgb(84 84 88 / 0.6);
+  --color-fill: rgb(118 118 128 / 0.24);
+  --color-fill2: rgb(118 118 128 / 0.36);
+
+  --color-sys-green: #30d158;
+  --color-sys-orange: #ff9f0a;
+  --color-sys-red: #ff453a;
+  --color-sys-blue: #0a84ff;
+  --color-sys-indigo: #5e5ce6;
+  --color-sys-gray: #8e8e93;
+  --color-sys-yellow: #ffd60a;
+  --color-sys-pink: #ff375f;
+
+  /* Full-screen scan results: Apple's high-contrast variants, readable with white text. */
+  --color-ok-deep: #248a3d;
+  --color-warn-deep: #c93400;
+  --color-bad-deep: #d70015;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-rounded: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-html,
-body {
-  background: #020617; /* slate-950 */
-  color: #f1f5f9;
-  -webkit-tap-highlight-color: transparent;
-  overscroll-behavior-y: none;
+/* Apple text styles (iOS points ≈ CSS px). */
+@utility t-large { font-family: var(--font-display); font-size: 34px; line-height: 41px; font-weight: 700; letter-spacing: 0.37px; }
+@utility t-title1 { font-family: var(--font-display); font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: 0.36px; }
+@utility t-title2 { font-family: var(--font-display); font-size: 22px; line-height: 28px; font-weight: 700; letter-spacing: 0.35px; }
+@utility t-title3 { font-family: var(--font-display); font-size: 20px; line-height: 25px; font-weight: 600; letter-spacing: 0.38px; }
+@utility t-headline { font-size: 17px; line-height: 22px; font-weight: 600; letter-spacing: -0.43px; }
+@utility t-body { font-size: 17px; line-height: 22px; letter-spacing: -0.43px; }
+@utility t-callout { font-size: 16px; line-height: 21px; letter-spacing: -0.31px; }
+@utility t-subhead { font-size: 15px; line-height: 20px; letter-spacing: -0.23px; }
+@utility t-footnote { font-size: 13px; line-height: 18px; letter-spacing: -0.08px; }
+@utility t-caption { font-size: 12px; line-height: 16px; letter-spacing: 0; }
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    background: var(--color-bg);
+    color: var(--color-label);
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-size: 17px;
+    letter-spacing: -0.43px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "kern";
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  }
+
+  /* Keyboard focus ring for buttons and links; text fields show the caret instead (iOS). */
+  :where(a, button, [role="switch"], [role="tab"], select):focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  :where(input, textarea):focus {
+    outline: none;
+  }
+  input {
+    caret-color: var(--color-accent);
+  }
 }
 
-body {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
+.tabular {
+  font-variant-numeric: tabular-nums;
 }
 
-/* html5-qrcode renders its own <video>; make it fill the scanner box. */
-#reader video {
+/* html5-qrcode renders its own <video>; make it fill the scanner. */
+/* html5-qrcode forces position: relative and pixel sizes; pin it full-bleed. */
+#reader {
+  position: absolute !important;
+  inset: 0 !important;
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover;
-}
-#reader {
   border: 0 !important;
+}
+/* Sized in JS (scan page) to "cover" while keeping the camera's aspect ratio:
+   the decoder copies the element's box, so it must never be stretched. */
+#reader video {
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  max-width: none !important;
+  transform: translate(-50%, -50%);
+}
+#reader img[alt="Info icon"],
+#reader > div:not(:has(video)) {
+  display: none !important;
 }
 
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
-  20%, 60% { transform: translateX(-8px); }
-  40%, 80% { transform: translateX(8px); }
+  15%, 55% { transform: translateX(-10px); }
+  35%, 75% { transform: translateX(10px); }
 }
-.shake { animation: shake 0.35s; }
+.shake { animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pop-in {
+  from { transform: scale(0.85); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.anim-sheet { animation: sheet-in 0.32s cubic-bezier(0.32, 0.72, 0, 1); }
+.anim-fade { animation: fade-in 0.2s ease-out; }
+.anim-pop { animation: pop-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .shake, .anim-sheet, .anim-fade, .anim-pop { animation: none; }
+}

@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ChevronLeft, Copy, Eye, EyeOff, FileSpreadsheet, Plus, Printer, Trash2 } from "lucide-react";
 import { api, errorMessage } from "../api";
-import { Button, Card, Field, Notice, btn, inputClass } from "../ui";
+import { Button, FieldRow, IconTile, Notice, Row, Section, Sheet, SheetAction, Spinner, TextField, Toggle } from "../ui";
 import { useApp } from "../AppContext";
 
 interface AdminDay {
@@ -23,10 +24,13 @@ interface AdminEvent {
   attendees: number;
 }
 
+type Msg = { tone: "ok" | "error"; text: string } | null;
+
 export function EventsAdmin() {
   const [events, setEvents] = useState<AdminEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const { refresh } = useApp();
 
   const load = useCallback(async () => {
@@ -45,154 +49,202 @@ export function EventsAdmin() {
     await refresh().catch(() => {});
   };
 
+  const open = events?.find((e) => e.id === openId);
+  if (open) return <EventDetail ev={open} onBack={() => setOpenId(null)} onChange={changed} />;
+  if (creating)
+    return (
+      <CreateEvent
+        onCancel={() => setCreating(false)}
+        onCreated={async (id) => {
+          setCreating(false);
+          await changed();
+          setOpenId(id);
+        }}
+      />
+    );
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-7">
       {error && <Notice tone="error">{error}</Notice>}
-      <CreateEvent onCreated={changed} />
-      {events?.map((ev) => (
-        <Card key={ev.id}>
-          <button className="flex w-full items-center justify-between text-left" onClick={() => setOpen(open === ev.id ? null : ev.id)}>
-            <div>
-              <p className="text-lg font-bold">
-                {ev.name} {!ev.is_active && <span className="text-xs font-normal text-amber-400">(inactive)</span>}
-              </p>
-              <p className="text-xs text-slate-400">
-                {ev.slug} · {ev.attendees} attendees · {ev.days.map((d) => d.day_date).join(", ") || "no days"}
-              </p>
-            </div>
-            <span className="text-slate-500">{open === ev.id ? "▲" : "▼"}</span>
-          </button>
-          {open === ev.id && <EventDetail ev={ev} onChange={changed} />}
-        </Card>
-      ))}
+      <Button size="large" className="w-full" onClick={() => setCreating(true)}>
+        <Plus className="h-5 w-5" strokeWidth={2.5} aria-hidden />
+        New Event
+      </Button>
+      {events === null && !error && <Spinner />}
+      {events && events.length > 0 && (
+        <Section header="Events">
+          {events.map((ev) => (
+            <Row
+              key={ev.id}
+              title={ev.name}
+              subtitle={`${ev.attendees} registered · ${ev.days.map((d) => d.day_date).join(", ") || "no days"}`}
+              value={ev.is_active ? undefined : "Inactive"}
+              chevron
+              onClick={() => setOpenId(ev.id)}
+            />
+          ))}
+        </Section>
+      )}
     </div>
   );
 }
 
-function CreateEvent({ onCreated }: { onCreated: () => Promise<void> }) {
-  const [show, setShow] = useState(false);
+function BackLink({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="-ml-2 -mt-3 flex items-center text-accent active:opacity-50">
+      <ChevronLeft className="h-7 w-7" strokeWidth={2.4} aria-hidden />
+      <span className="t-body -ml-0.5">{label}</span>
+    </button>
+  );
+}
+
+const autoSlug = (name: string) =>
+  name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+
+function CreateEvent({ onCancel, onCreated }: { onCancel: () => void; onCreated: (id: string) => Promise<void> }) {
   const [f, setF] = useState({ name: "", slug: "", location: "" });
+  const [slugTouched, setSlugTouched] = useState(false);
   const [days, setDays] = useState<{ day_date: string; label: string }[]>([{ day_date: "", label: "Day 1" }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const autoSlug = (name: string) =>
-    name
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await api("/api/admin/events", { body: { ...f, days: days.filter((d) => d.day_date) } });
-      setShow(false);
-      setF({ name: "", slug: "", location: "" });
-      setDays([{ day_date: "", label: "Day 1" }]);
-      await onCreated();
+      const r = await api<{ id: string }>("/api/admin/events", { body: { ...f, days: days.filter((d) => d.day_date) } });
+      await onCreated(r.id);
     } catch (err) {
       setError(errorMessage(err));
-    } finally {
       setBusy(false);
     }
   };
 
-  if (!show)
-    return (
-      <Button big className="w-full" onClick={() => setShow(true)}>
-        + New event
-      </Button>
-    );
   return (
-    <Card>
-      <form onSubmit={submit} className="space-y-3">
-        <h3 className="text-lg font-bold">New event</h3>
-        <Field label="Name *">
-          <input
-            className={inputClass}
+    <form onSubmit={submit} className="space-y-7">
+      <BackLink label="Events" onClick={onCancel} />
+      <h2 className="t-title2 -mt-4">New Event</h2>
+      <Section footer="The slug identifies the event in its Google Form script, e.g. mini-ctf-2026.">
+        <FieldRow label="Name" htmlFor="ne-name">
+          <TextField
+            id="ne-name"
             value={f.name}
             required
-            onChange={(e) => setF((s) => ({ ...s, name: e.target.value, slug: s.slug && s.slug !== autoSlug(s.name) ? s.slug : autoSlug(e.target.value) }))}
+            placeholder="Mini CTF 2026"
+            onChange={(e) => setF((s) => ({ ...s, name: e.target.value, slug: slugTouched ? s.slug : autoSlug(e.target.value) }))}
           />
-        </Field>
-        <Field label="Slug *" hint="Used by the Google Form script (EVENT_SLUG). e.g. mini-ctf-2026">
-          <input className={inputClass} value={f.slug} required pattern="[a-z0-9][a-z0-9-]{1,62}" onChange={(e) => setF((s) => ({ ...s, slug: e.target.value }))} />
-        </Field>
-        <Field label="Location">
-          <input className={inputClass} value={f.location} onChange={(e) => setF((s) => ({ ...s, location: e.target.value }))} />
-        </Field>
-        <p className="text-sm font-medium text-slate-300">Days</p>
+        </FieldRow>
+        <FieldRow label="Slug" htmlFor="ne-slug">
+          <TextField
+            id="ne-slug"
+            value={f.slug}
+            required
+            pattern="[a-z0-9][a-z0-9-]{1,62}"
+            autoCapitalize="off"
+            placeholder="mini-ctf-2026"
+            className="font-mono"
+            onChange={(e) => {
+              setSlugTouched(true);
+              setF((s) => ({ ...s, slug: e.target.value }));
+            }}
+          />
+        </FieldRow>
+        <FieldRow label="Location" htmlFor="ne-loc">
+          <TextField id="ne-loc" value={f.location} placeholder="ISSAT Sousse" onChange={(e) => setF((s) => ({ ...s, location: e.target.value }))} />
+        </FieldRow>
+      </Section>
+
+      <Section header="Days">
         {days.map((d, i) => (
-          <div key={i} className="flex gap-2">
-            <input
+          <div key={i} className="flex items-center gap-2 px-4">
+            <TextField
+              aria-label={`Day ${i + 1} date`}
               type="date"
-              className={inputClass}
               value={d.day_date}
+              className="w-auto flex-1"
               onChange={(e) => setDays((ds) => ds.map((x, j) => (j === i ? { ...x, day_date: e.target.value } : x)))}
             />
-            <input
-              className={inputClass}
+            <TextField
+              aria-label={`Day ${i + 1} label`}
               value={d.label}
               placeholder="Label"
+              className="w-24 text-right text-label2"
               onChange={(e) => setDays((ds) => ds.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
             />
             {days.length > 1 && (
-              <Button type="button" variant="ghost" onClick={() => setDays((ds) => ds.filter((_, j) => j !== i))}>
-                ✕
-              </Button>
+              <button type="button" aria-label="Remove day" onClick={() => setDays((ds) => ds.filter((_, j) => j !== i))} className="text-sys-red active:opacity-50">
+                <Trash2 className="h-[18px] w-[18px]" />
+              </button>
             )}
           </div>
         ))}
-        <Button type="button" variant="secondary" onClick={() => setDays((ds) => [...ds, { day_date: "", label: `Day ${ds.length + 1}` }])}>
-          + Add day
-        </Button>
-        {error && <Notice tone="error">{error}</Notice>}
-        <div className="flex gap-2">
-          <Button type="submit" disabled={busy}>
-            Create event
-          </Button>
-          <Button type="button" variant="ghost" onClick={() => setShow(false)}>
-            Cancel
-          </Button>
-        </div>
-      </form>
-    </Card>
+        <Row title="Add Day" accent onClick={() => setDays((ds) => [...ds, { day_date: "", label: `Day ${ds.length + 1}` }])} />
+      </Section>
+
+      {error && <Notice tone="error">{error}</Notice>}
+      <Button type="submit" size="large" className="w-full" disabled={busy || !f.name.trim() || !f.slug.trim()}>
+        {busy ? "Creating…" : "Create Event"}
+      </Button>
+    </form>
   );
 }
 
-function Copy({ value }: { value: string }) {
+function CopyButton({ value, label }: { value: string; label: string }) {
   const [done, setDone] = useState(false);
   return (
-    <Button
+    <button
       type="button"
-      variant="secondary"
+      aria-label={`Copy ${label}`}
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(value);
           setDone(true);
           setTimeout(() => setDone(false), 1500);
         } catch {
-          prompt("Copy this:", value);
+          /* clipboard blocked: the value is selectable */
         }
       }}
+      className="flex shrink-0 items-center gap-1 t-subhead text-accent active:opacity-50"
     >
+      <Copy className="h-4 w-4" strokeWidth={2.2} aria-hidden />
       {done ? "Copied" : "Copy"}
-    </Button>
+    </button>
   );
 }
 
-function EventDetail({ ev, onChange }: { ev: AdminEvent; onChange: () => Promise<void> }) {
+function PropRow({ name, value, secret }: { name: string; value: string; secret?: boolean }) {
+  const [shown, setShown] = useState(!secret);
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="min-w-0 flex-1">
+        <p className="t-caption font-semibold uppercase tracking-wide text-label2">{name}</p>
+        <p className="mt-0.5 break-all font-mono text-[14px] select-all">{shown ? value : "•".repeat(28)}</p>
+      </div>
+      {secret && (
+        <button type="button" aria-label={shown ? "Hide secret" : "Show secret"} onClick={() => setShown((s) => !s)} className="text-label2 active:opacity-50">
+          {shown ? <EyeOff className="h-[18px] w-[18px]" /> : <Eye className="h-[18px] w-[18px]" />}
+        </button>
+      )}
+      <CopyButton value={value} label={name} />
+    </div>
+  );
+}
+
+function EventDetail({ ev, onBack, onChange }: { ev: AdminEvent; onBack: () => void; onChange: () => Promise<void> }) {
   const [f, setF] = useState({ name: ev.name, slug: ev.slug, location: ev.location ?? "" });
   const [newDay, setNewDay] = useState({ day_date: "", label: "" });
-  const [showSecret, setShowSecret] = useState(false);
-  const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [msg, setMsg] = useState<Msg>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmRegen, setConfirmRegen] = useState(false);
   const apiUrl = typeof window !== "undefined" ? `${window.location.origin}/api/form-submit` : "/api/form-submit";
+  const dirty = f.name !== ev.name || f.slug !== ev.slug || f.location !== (ev.location ?? "");
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true);
@@ -209,43 +261,57 @@ function EventDetail({ ev, onChange }: { ev: AdminEvent; onChange: () => Promise
   };
 
   return (
-    <div className="mt-4 space-y-5 border-t border-slate-800 pt-4">
+    <div className="space-y-7">
+      <BackLink label="Events" onClick={onBack} />
+      <div className="-mt-4">
+        <h2 className="t-title2">{ev.name}</h2>
+        <p className="t-subhead text-label2">{ev.attendees} registered</p>
+      </div>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
 
-      <section className="space-y-3">
-        <h4 className="font-semibold">Details</h4>
-        <Field label="Name">
-          <input className={inputClass} value={f.name} onChange={(e) => setF((s) => ({ ...s, name: e.target.value }))} />
-        </Field>
-        <Field label="Slug" hint="Changing it breaks the Apps Script until you update EVENT_SLUG there.">
-          <input className={inputClass} value={f.slug} onChange={(e) => setF((s) => ({ ...s, slug: e.target.value }))} />
-        </Field>
-        <Field label="Location">
-          <input className={inputClass} value={f.location} onChange={(e) => setF((s) => ({ ...s, location: e.target.value }))} />
-        </Field>
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={busy} onClick={() => run(() => api(`/api/admin/events/${ev.id}`, { method: "PATCH", body: f }), "Saved.")}>
-            Save
-          </Button>
-          <Button
-            variant={ev.is_active ? "secondary" : "primary"}
-            disabled={busy}
-            onClick={() => run(() => api(`/api/admin/events/${ev.id}`, { method: "PATCH", body: { is_active: !ev.is_active } }), ev.is_active ? "Deactivated." : "Activated.")}
-          >
-            {ev.is_active ? "Deactivate" : "Activate"}
-          </Button>
-        </div>
-      </section>
+      <Section header="Details" footer="Changing the slug breaks the form's script until you update EVENT_SLUG there.">
+        <FieldRow label="Name" htmlFor="ed-name">
+          <TextField id="ed-name" value={f.name} onChange={(e) => setF((s) => ({ ...s, name: e.target.value }))} />
+        </FieldRow>
+        <FieldRow label="Slug" htmlFor="ed-slug">
+          <TextField id="ed-slug" value={f.slug} autoCapitalize="off" className="font-mono" onChange={(e) => setF((s) => ({ ...s, slug: e.target.value }))} />
+        </FieldRow>
+        <FieldRow label="Location" htmlFor="ed-loc">
+          <TextField id="ed-loc" value={f.location} onChange={(e) => setF((s) => ({ ...s, location: e.target.value }))} />
+        </FieldRow>
+        {dirty && <Row title="Save Changes" accent disabled={busy} onClick={() => run(() => api(`/api/admin/events/${ev.id}`, { method: "PATCH", body: f }), "Saved.")} />}
+      </Section>
 
-      <section className="space-y-2">
-        <h4 className="font-semibold">Days</h4>
+      <Section footer="Inactive events are hidden from staff and refuse check-ins. Form registrations still come in.">
+        <Row
+          title="Active"
+          trailing={
+            <Toggle
+              label="Active"
+              checked={ev.is_active}
+              disabled={busy}
+              onChange={(v) => run(() => api(`/api/admin/events/${ev.id}`, { method: "PATCH", body: { is_active: v } }), v ? "Event activated." : "Event deactivated.")}
+            />
+          }
+        />
+      </Section>
+
+      <Section header="Days" footer="A day with check-ins can't be deleted.">
         {ev.days.map((d) => (
           <DayRow key={d.id} eventId={ev.id} day={d} run={run} busy={busy} />
         ))}
-        <div className="flex gap-2">
-          <input type="date" className={inputClass} value={newDay.day_date} onChange={(e) => setNewDay((s) => ({ ...s, day_date: e.target.value }))} />
-          <input className={inputClass} placeholder={`Day ${ev.days.length + 1}`} value={newDay.label} onChange={(e) => setNewDay((s) => ({ ...s, label: e.target.value }))} />
+        <div className="flex items-center gap-2 px-4">
+          <TextField aria-label="New day date" type="date" value={newDay.day_date} className="w-auto flex-1" onChange={(e) => setNewDay((s) => ({ ...s, day_date: e.target.value }))} />
+          <TextField
+            aria-label="New day label"
+            value={newDay.label}
+            placeholder={`Day ${ev.days.length + 1}`}
+            className="w-24 text-right"
+            onChange={(e) => setNewDay((s) => ({ ...s, label: e.target.value }))}
+          />
           <Button
+            size="small"
+            variant="tinted"
             disabled={busy || !newDay.day_date}
             onClick={() =>
               run(async () => {
@@ -257,75 +323,69 @@ function EventDetail({ ev, onChange }: { ev: AdminEvent; onChange: () => Promise
             Add
           </Button>
         </div>
-      </section>
+      </Section>
 
-      <section className="space-y-2">
-        <h4 className="font-semibold">Exports</h4>
-        <div className="flex flex-wrap gap-2">
-          <a className={btn("secondary")} href={`/api/events/${ev.id}/export.csv`}>
-            Download CSV
-          </a>
-          <a className={btn("secondary")} href={`/api/events/${ev.id}/backup`} target="_blank" rel="noreferrer">
-            Backup list (print / PDF)
-          </a>
-        </div>
-      </section>
+      <Section header="Exports" inset={60}>
+        <Row
+          href={`/api/events/${ev.id}/export.csv`}
+          external
+          icon={<IconTile color="bg-[#30b0c7]"><FileSpreadsheet className="h-[17px] w-[17px]" strokeWidth={2.2} /></IconTile>}
+          title="Download CSV"
+        />
+        <Row
+          href={`/api/events/${ev.id}/backup`}
+          external
+          icon={<IconTile color="bg-sys-gray"><Printer className="h-[17px] w-[17px]" strokeWidth={2.2} /></IconTile>}
+          title="Backup List"
+          subtitle="Print or save as PDF"
+        />
+      </Section>
 
-      <section className="space-y-3">
-        <h4 className="font-semibold">Google Form connection</h4>
-        <p className="text-sm text-slate-400">
-          In the form: ⋮ → Script editor → paste <code>apps-script/Code.gs</code> → Project Settings → Script Properties:
-        </p>
+      <Section
+        header="Google Form"
+        footer={
+          <ol className="mt-1 list-decimal space-y-1 pl-4">
+            <li>
+              Form questions, exact titles: <b>Full name</b>, <b>Email</b>, <b>Phone</b>, <b>Class / Year</b>, <b>Team name</b>.
+            </li>
+            <li>
+              In the form: ⋮ → Script editor → paste <span className="font-mono">apps-script/Code.gs</span>.
+            </li>
+            <li>Project Settings → Script Properties: add the three values above.</li>
+            <li>
+              Run <span className="font-mono">setup</span> once and allow access. The log should say OK.
+            </li>
+            <li>
+              Responses from before setup? Run <span className="font-mono">syncAll</span>. It&apos;s safe to repeat.
+            </li>
+          </ol>
+        }
+      >
         <PropRow name="API_URL" value={apiUrl} />
         <PropRow name="EVENT_SLUG" value={ev.slug} />
-        <div className="rounded-xl bg-slate-950 p-3">
-          <p className="text-xs text-slate-400">FORM_SECRET</p>
-          <div className="mt-1 flex items-center gap-2">
-            <code className="min-w-0 flex-1 break-all text-sm">{showSecret ? ev.form_secret : "•".repeat(24)}</code>
-            <Button variant="ghost" onClick={() => setShowSecret((s) => !s)}>
-              {showSecret ? "Hide" : "Show"}
-            </Button>
-            <Copy value={ev.form_secret} />
-          </div>
-        </div>
-        <ol className="list-decimal space-y-1 pl-5 text-sm text-slate-400">
-          <li>
-            Form questions (exact titles): <code>Full name</code>, <code>Email</code>, <code>Phone</code>, <code>Class / Year</code>, <code>Team name</code>.
-          </li>
-          <li>Set the 3 Script Properties above.</li>
-          <li>
-            Run <code>setup</code> once (authorize when asked). It installs the on-submit trigger and the 5-minute retry trigger.
-          </li>
-          <li>
-            Run <code>testConnection</code>: it should log <code>OK</code>.
-          </li>
-          <li>
-            Already have responses? Run <code>syncAll</code> (safe to repeat).
-          </li>
-        </ol>
-        <Button
-          variant="danger"
-          disabled={busy}
+        <PropRow name="FORM_SECRET" value={ev.form_secret} secret />
+      </Section>
+
+      <Section footer="The form stops sending registrations until you paste the new FORM_SECRET into its script. They're queued and go through after.">
+        <Row title="Regenerate Secret" destructive disabled={busy} onClick={() => setConfirmRegen(true)} />
+      </Section>
+
+      <Sheet
+        open={confirmRegen}
+        onClose={() => setConfirmRegen(false)}
+        title="Regenerate the form secret?"
+        message="You'll need to update FORM_SECRET in this event's Apps Script."
+      >
+        <SheetAction
+          destructive
           onClick={() => {
-            if (confirm("Regenerate the secret? The form's Apps Script stops working until you paste the new FORM_SECRET there."))
-              void run(() => api(`/api/admin/events/${ev.id}`, { method: "PATCH", body: { regenerate_secret: true } }), "New secret generated. Update FORM_SECRET in the Apps Script.");
+            setConfirmRegen(false);
+            void run(() => api(`/api/admin/events/${ev.id}`, { method: "PATCH", body: { regenerate_secret: true } }), "New secret created. Update FORM_SECRET in the Apps Script.");
           }}
         >
-          Regenerate secret
-        </Button>
-      </section>
-    </div>
-  );
-}
-
-function PropRow({ name, value }: { name: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-slate-950 p-3">
-      <p className="text-xs text-slate-400">{name}</p>
-      <div className="mt-1 flex items-center gap-2">
-        <code className="min-w-0 flex-1 break-all text-sm">{value}</code>
-        <Copy value={value} />
-      </div>
+          Regenerate Secret
+        </SheetAction>
+      </Sheet>
     </div>
   );
 }
@@ -345,23 +405,30 @@ function DayRow({
   const [date, setDate] = useState(day.day_date);
   const dirty = label !== (day.label ?? "") || date !== day.day_date;
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-950 p-2">
-      <input type="date" className={`${inputClass} w-auto flex-1 py-2`} value={date} onChange={(e) => setDate(e.target.value)} />
-      <input className={`${inputClass} w-auto flex-1 py-2`} value={label} onChange={(e) => setLabel(e.target.value)} />
-      <span className="text-xs text-slate-400">{day.checkins} in</span>
-      {dirty && (
-        <Button disabled={busy} onClick={() => run(() => api(`/api/admin/events/${eventId}/days/${day.id}`, { method: "PATCH", body: { label, day_date: date } }), "Day saved.")}>
+    <div className="flex items-center gap-2 px-4">
+      <TextField aria-label="Date" type="date" className="w-auto flex-1" value={date} onChange={(e) => setDate(e.target.value)} />
+      <TextField aria-label="Label" className="w-24 text-right" value={label} onChange={(e) => setLabel(e.target.value)} />
+      {dirty ? (
+        <Button
+          size="small"
+          variant="tinted"
+          disabled={busy}
+          onClick={() => run(() => api(`/api/admin/events/${eventId}/days/${day.id}`, { method: "PATCH", body: { label, day_date: date } }), "Day saved.")}
+        >
           Save
         </Button>
-      )}
-      {day.checkins === 0 && (
-        <Button
-          variant="ghost"
+      ) : day.checkins > 0 ? (
+        <span className="t-footnote shrink-0 tabular text-label2">{day.checkins} in</span>
+      ) : (
+        <button
+          type="button"
+          aria-label={`Delete ${day.day_date}`}
           disabled={busy}
-          onClick={() => confirm(`Delete ${day.day_date}?`) && run(() => api(`/api/admin/events/${eventId}/days/${day.id}`, { method: "DELETE" }), "Day deleted.")}
+          onClick={() => run(() => api(`/api/admin/events/${eventId}/days/${day.id}`, { method: "DELETE" }), "Day deleted.")}
+          className="text-sys-red active:opacity-50 disabled:opacity-40"
         >
-          ✕
-        </Button>
+          <Trash2 className="h-[18px] w-[18px]" />
+        </button>
       )}
     </div>
   );

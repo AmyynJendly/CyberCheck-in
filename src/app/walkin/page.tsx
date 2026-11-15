@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { CircleCheck } from "lucide-react";
 import { useApp, useDayParam } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
 import { DayPicker } from "@/components/DayPicker";
-import { Button, Field, NeedEvent, Notice, Page, inputClass } from "@/components/ui";
+import { Button, FieldRow, NeedEvent, Notice, Page, Section, TextField } from "@/components/ui";
 
 type WalkInResult =
   | { status: "OK"; name: string; short_code: string; day_label: string; email_queued: boolean }
@@ -20,6 +21,7 @@ export default function WalkInPage() {
   const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<WalkInResult | null>(null);
+  const [lastEmail, setLastEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const set = (k: keyof typeof EMPTY) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -29,9 +31,11 @@ export default function WalkInPage() {
     if (!event || busy) return;
     setBusy(true);
     setError(null);
+    setResult(null);
     try {
       const r = await api<WalkInResult>("/api/walkin", { body: { event_id: event.id, ...form, ...dayParam } });
       setResult(r);
+      setLastEmail(form.email);
       if (r.status === "OK") {
         setForm(EMPTY);
         try {
@@ -53,51 +57,55 @@ export default function WalkInPage() {
         <>
           {!activeDay && (
             <>
-              <Notice tone="warn">No event day today — walk-ins are checked in for today, so this is disabled.</Notice>
+              <Notice tone="warn">No event day today. Walk-ins are checked in for today, so this is off.</Notice>
               <DayPicker />
             </>
           )}
+
           {result?.status === "OK" && (
-            <div className="rounded-2xl bg-emerald-600 p-5 text-white">
-              <p className="text-sm font-semibold uppercase tracking-wide">✓ Added & checked in · {result.day_label}</p>
-              <p className="text-2xl font-bold">{result.name}</p>
-              <p className="mt-1">
-                Backup code: <span className="font-mono text-xl font-bold tracking-widest">{result.short_code}</span>
-              </p>
-              {result.email_queued && <p className="text-sm opacity-90">Their QR is being emailed.</p>}
+            <div className="anim-fade flex items-start gap-3 rounded-[14px] bg-sys-green/15 p-4">
+              <CircleCheck className="mt-0.5 h-7 w-7 shrink-0 text-sys-green" strokeWidth={2.2} aria-hidden />
+              <div className="min-w-0">
+                <p className="t-headline">{result.name}</p>
+                <p className="t-subhead text-label2">Added and checked in for {result.day_label}.</p>
+                <p className="t-subhead mt-2 text-label2">
+                  Backup code <span className="ml-1 font-mono text-[17px] font-semibold tracking-[0.14em] text-label">{result.short_code}</span>
+                </p>
+                {result.email_queued && <p className="t-footnote mt-1 text-label2">Their QR code is on its way by email.</p>}
+              </div>
             </div>
           )}
           {result?.status === "EMAIL_EXISTS" && (
             <Notice tone="warn">
-              <strong>{result.name}</strong> is already registered with that email.{" "}
-              <Link className="font-semibold underline" href={`/search?q=${encodeURIComponent(form.email)}`}>
-                Find them and check in →
-              </Link>
+              <strong>{result.name}</strong> already registered with this email.{" "}
+              <Link href={`/search?q=${encodeURIComponent(lastEmail)}`}>Find them and check in</Link>
             </Notice>
           )}
-          {result?.status === "NO_EVENT_DAY" && <Notice tone="error">No event day today. Not added.</Notice>}
+          {result?.status === "NO_EVENT_DAY" && <Notice tone="error">No event day today. Nobody was added.</Notice>}
           {error && <Notice tone="error">{error}</Notice>}
 
-          <form onSubmit={submit} className="space-y-4">
-            <Field label="Full name *">
-              <input className={inputClass} value={form.full_name} onChange={set("full_name")} required autoComplete="off" autoFocus />
-            </Field>
-            <Field label="Phone">
-              <input className={inputClass} value={form.phone} onChange={set("phone")} inputMode="tel" autoComplete="off" />
-            </Field>
-            <Field label="Email" hint="If given, they get their QR by email (useful for day 2).">
-              <input className={inputClass} value={form.email} onChange={set("email")} type="email" autoCapitalize="off" autoComplete="off" />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Class / Year">
-                <input className={inputClass} value={form.class_year} onChange={set("class_year")} autoComplete="off" />
-              </Field>
-              <Field label="Team">
-                <input className={inputClass} value={form.team_name} onChange={set("team_name")} autoComplete="off" />
-              </Field>
-            </div>
-            <Button big type="submit" className="w-full py-5 text-xl" disabled={busy || !activeDay || !form.full_name.trim()}>
-              {busy ? "Adding…" : "Add & check in"}
+          <form onSubmit={submit} className="space-y-7">
+            <Section header="Required">
+              <FieldRow label="Full name" htmlFor="wi-name">
+                <TextField id="wi-name" value={form.full_name} onChange={set("full_name")} required autoComplete="off" autoFocus placeholder="First and last name" />
+              </FieldRow>
+            </Section>
+            <Section header="Optional" footer="With an email, they also get their QR code for the next days.">
+              <FieldRow label="Phone" htmlFor="wi-phone">
+                <TextField id="wi-phone" value={form.phone} onChange={set("phone")} inputMode="tel" autoComplete="off" placeholder="+216" />
+              </FieldRow>
+              <FieldRow label="Email" htmlFor="wi-email">
+                <TextField id="wi-email" value={form.email} onChange={set("email")} type="email" autoCapitalize="off" autoComplete="off" placeholder="name@example.com" />
+              </FieldRow>
+              <FieldRow label="Class / Year" htmlFor="wi-class">
+                <TextField id="wi-class" value={form.class_year} onChange={set("class_year")} autoComplete="off" placeholder="e.g. ING 2" />
+              </FieldRow>
+              <FieldRow label="Team" htmlFor="wi-team">
+                <TextField id="wi-team" value={form.team_name} onChange={set("team_name")} autoComplete="off" placeholder="Team name" />
+              </FieldRow>
+            </Section>
+            <Button type="submit" size="large" className="w-full" disabled={busy || !activeDay || !form.full_name.trim()}>
+              {busy ? "Adding…" : "Add & Check In"}
             </Button>
           </form>
         </>

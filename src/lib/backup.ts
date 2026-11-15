@@ -37,11 +37,11 @@ export async function buildBackupHtml(event: EventRow): Promise<{ html: string; 
 <title>Backup list — ${esc(event.name)}</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: Arial, Helvetica, sans-serif; color: #000; margin: 24px; font-size: 12px; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif; color: #000; margin: 24px; font-size: 12px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
   .meta { color: #444; margin: 0 0 12px; }
   .bar { margin: 0 0 16px; display: flex; gap: 8px; }
-  .bar button { font-size: 15px; padding: 10px 16px; border-radius: 8px; border: 0; background: #0f766e; color: #fff; cursor: pointer; }
+  .bar button { font-size: 15px; padding: 10px 16px; border-radius: 8px; border: 0; background: #0a7f94; color: #fff; cursor: pointer; }
   table { width: 100%; border-collapse: collapse; }
   th, td { border: 1px solid #999; padding: 5px 6px; text-align: left; vertical-align: middle; }
   th { background: #eee; font-size: 11px; }

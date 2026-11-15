@@ -51,12 +51,12 @@ export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmai
     .join("\n");
 
   const html = `<!doctype html>
-<html><body style="margin:0;padding:0;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#111">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:24px 0">
+<html><body style="margin:0;padding:0;background:#f2f2f7;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','Segoe UI',Roboto,Arial,sans-serif;color:#111">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f2f7;padding:24px 0">
 <tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:12px;padding:28px">
 <tr><td>
-  <p style="font-size:13px;letter-spacing:2px;text-transform:uppercase;color:#0f766e;margin:0 0 8px">Cybertrace Club</p>
+  <p style="font-size:13px;letter-spacing:2px;text-transform:uppercase;color:#0a7f94;margin:0 0 8px">Cybertrace Club</p>
   <h1 style="font-size:22px;margin:0 0 16px">Hi ${esc(ctx.fullName)},</h1>
   <p style="font-size:16px;line-height:1.5;margin:0 0 12px">You're registered for <strong>${esc(ctx.eventName)}</strong>.</p>
   ${dates.length ? `<p style="font-size:15px;line-height:1.5;margin:0 0 4px"><strong>When:</strong> ${dates.map(esc).join("<br>")}</p>` : ""}
@@ -64,7 +64,7 @@ export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmai
   <p style="font-size:15px;line-height:1.5;margin:16px 0 8px">Show this QR code at the entrance:</p>
   <p style="text-align:center;margin:0 0 16px"><img src="cid:qr" alt="Your check-in QR code" width="260" height="260" style="width:260px;height:260px;border:1px solid #e5e7eb;border-radius:8px"></p>
   <p style="font-size:15px;line-height:1.5;margin:0 0 6px">If the QR doesn't work, give this code at the desk:</p>
-  <p style="font-size:34px;font-weight:bold;letter-spacing:6px;font-family:'Courier New',monospace;text-align:center;margin:0 0 16px;color:#0f766e">${esc(ctx.shortCode)}</p>
+  <p style="font-size:34px;font-weight:bold;letter-spacing:6px;font-family:'Courier New',monospace;text-align:center;margin:0 0 16px;color:#0a7f94">${esc(ctx.shortCode)}</p>
   <p style="font-size:14px;line-height:1.5;margin:0;color:#b91c1c"><strong>Don't share this code. It works once per day.</strong></p>
   <p style="font-size:13px;color:#6b7280;margin:24px 0 0">— Cybertrace Club</p>
 </td></tr></table>

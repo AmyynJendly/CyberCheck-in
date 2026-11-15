@@ -1,159 +1,172 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
+import { BookOpen, Check, FileSpreadsheet, History, Printer, ScanLine, Search, Settings, UserPlus } from "lucide-react";
 import { useApp } from "@/components/AppContext";
 import { api } from "@/components/api";
 import { useStats } from "@/components/useStats";
 import { DayPicker } from "@/components/DayPicker";
-import { Button, Card, Notice, OfflineBanner, btn } from "@/components/ui";
+import { IconTile, Initials, Notice, OfflineBanner, Row, Section, Sheet, SheetAction, Spinner, btn } from "@/components/ui";
 import { dayName } from "@/components/types";
+
+const ic = "h-[17px] w-[17px]";
 
 export default function Home() {
   const { ready, me, events, event, selectEvent, activeDay, dayOverrideId } = useApp();
   const { stats } = useStats(event?.id, dayOverrideId, 15_000);
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   const logout = async () => {
     await api("/api/auth/logout", { body: {} }).catch(() => {});
     window.location.href = "/login";
   };
 
-  if (!ready) return <p className="p-6 text-slate-400">Loading…</p>;
+  if (!ready) return <Spinner />;
+
+  const checked = stats?.today?.checked_in ?? 0;
+  const registered = stats?.registered ?? 0;
+  const pct = registered ? Math.min(100, Math.round((checked / registered) * 100)) : 0;
 
   return (
-    <div className="mx-auto min-h-dvh max-w-2xl pb-12">
+    <div className="mx-auto min-h-dvh max-w-2xl pb-[max(2.5rem,env(safe-area-inset-bottom))]">
       <OfflineBanner />
-      <header className="flex items-center justify-between px-4 pb-2 pt-5">
+      <header className="flex items-end justify-between px-4 pb-1 pt-[max(1.25rem,env(safe-area-inset-top))]">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-teal-400">Cybertrace check-in</p>
-          <p className="text-lg font-bold">
-            {me?.name} <span className="text-sm font-normal text-slate-400">({me?.role})</span>
+          <p className="t-footnote font-semibold uppercase tracking-wide text-label2">
+            {new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Tunis", weekday: "long", day: "numeric", month: "long" }).format(new Date())}
           </p>
+          <h1 className="t-large">Check-in</h1>
         </div>
-        <Button variant="ghost" onClick={logout}>
-          Log out
-        </Button>
+        <button type="button" onClick={() => setConfirmLogout(true)} aria-label={`Signed in as ${me?.name}. Account`} className="mb-1 active:opacity-60">
+          <Initials name={me?.name ?? "?"} size={36} />
+        </button>
       </header>
 
-      <main className="space-y-4 px-4">
+      <main className="mt-5 space-y-7 px-4">
         {events.length === 0 && (
           <Notice tone="warn">
-            No active events. {me?.role === "admin" ? <Link className="underline" href="/admin">Create one in Admin.</Link> : "Ask an admin to create one."}
+            No active events. {me?.role === "admin" ? <Link href="/admin">Create one in Admin.</Link> : "Ask an admin to create one."}
           </Notice>
         )}
 
         {events.length > 1 && (
-          <Card>
-            <p className="mb-2 text-sm text-slate-400">Event</p>
-            <div className="grid gap-2">
-              {events.map((e) => (
-                <button
-                  key={e.id}
-                  onClick={() => selectEvent(e.id)}
-                  className={`rounded-xl border px-4 py-3 text-left ${
-                    e.id === event?.id ? "border-teal-400 bg-teal-500/10" : "border-slate-800 bg-slate-950 hover:border-slate-600"
-                  }`}
-                >
-                  <span className="block font-semibold">{e.name}</span>
-                  <span className="text-xs text-slate-400">
-                    {e.days.map((d) => d.day_date).join(" · ") || "no days"}
-                    {e.today_day_id ? " · today" : ""}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </Card>
+          <Section header="Event">
+            {events.map((e) => (
+              <Row
+                key={e.id}
+                title={e.name}
+                subtitle={e.days.map((d) => d.day_date).join(" · ") || "No days yet"}
+                onClick={() => selectEvent(e.id)}
+                trailing={e.id === event?.id ? <Check className="h-5 w-5 text-accent" strokeWidth={2.6} aria-label="Selected" /> : undefined}
+              />
+            ))}
+          </Section>
         )}
 
         {event && (
           <>
-            <Card>
-              <h2 className="text-xl font-bold">{event.name}</h2>
-              {event.location && <p className="text-sm text-slate-400">{event.location}</p>}
-              <p className="mt-1 text-sm">
-                {activeDay ? (
-                  <span className="text-teal-300">
-                    {dayName(activeDay)} · {activeDay.day_date}
-                    {dayOverrideId ? " (picked by admin)" : ""}
-                  </span>
-                ) : (
-                  <span className="text-amber-300">No event day today</span>
-                )}
-              </p>
-              {stats && (
-                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                  <Stat label="Checked in" value={stats.today ? `${stats.today.checked_in}` : "—"} />
-                  <Stat label="Registered" value={`${stats.registered}`} />
-                  <Stat label="Walk-ins" value={`${stats.walk_ins}`} />
+            <section className="rounded-[16px] bg-bg2 p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="t-title2 truncate">{event.name}</h2>
+                  <p className="t-subhead mt-0.5 text-label2">
+                    {[event.location, activeDay ? `${dayName(activeDay)}${dayOverrideId ? " (picked)" : ""}` : null].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
+                {activeDay ? (
+                  <span className="t-caption shrink-0 rounded-full bg-sys-green/15 px-2.5 py-1 font-semibold text-sys-green">Live</span>
+                ) : (
+                  <span className="t-caption shrink-0 rounded-full bg-sys-orange/15 px-2.5 py-1 font-semibold text-sys-orange">No event today</span>
+                )}
+              </div>
+
+              <div className="mt-5 flex items-baseline gap-2">
+                <span className="font-rounded text-[56px] font-bold leading-none tracking-tight tabular">{stats ? (stats.today ? checked : "–") : " "}</span>
+                <span className="t-body text-label2">
+                  of <span className="tabular">{registered}</span> checked in{activeDay ? " today" : ""}
+                </span>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-fill" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+                <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${pct}%` }} />
+              </div>
+              {stats && (
+                <dl className="mt-4 grid grid-cols-3 gap-2">
+                  <Stat label="Registered" value={stats.from_form} />
+                  <Stat label="Walk-ins" value={stats.walk_ins} />
+                  <Stat label="Email issues" value={stats.emails.failed} warn={stats.emails.failed > 0} />
+                </dl>
               )}
               {stats && stats.days.length > 1 && (
-                <p className="mt-3 text-xs text-slate-400">
-                  {stats.days.map((d) => `${d.label}: ${d.checked_in}`).join(" · ")}
-                </p>
+                <p className="t-footnote mt-3 text-label2">{stats.days.map((d) => `${d.label}: ${d.checked_in}`).join("  ·  ")}</p>
               )}
-            </Card>
+            </section>
 
             {!activeDay && me?.role !== "admin" && (
-              <Notice tone="warn">Today is not an event day, so check-ins are disabled. An admin can pick a day manually.</Notice>
+              <Notice tone="warn">Today isn't an event day, so check-in is off. An admin can pick a day.</Notice>
             )}
             <DayPicker />
 
-            <div className="grid grid-cols-2 gap-3">
-              <Tile href="/scan" emoji="📷" label="Scan" primary />
-              <Tile href="/search" emoji="🔎" label="Search" />
-              <Tile href="/walkin" emoji="➕" label="Walk-in" />
-              <Tile href="/recent" emoji="🕘" label="My recent" />
-            </div>
+            <Link href="/scan" className={`${btn("filled", "large")} w-full`}>
+              <ScanLine className="h-5 w-5" strokeWidth={2.4} aria-hidden />
+              Scan Tickets
+            </Link>
 
-            <Card>
-              <p className="mb-3 text-sm text-slate-400">Exports</p>
-              <div className="flex flex-wrap gap-2">
-                <a className={btn("secondary")} href={`/api/events/${event.id}/export.csv`}>
-                  Download CSV
-                </a>
-                <a className={btn("secondary")} href={`/api/events/${event.id}/backup`} target="_blank" rel="noreferrer">
-                  Backup list (print / PDF)
-                </a>
-              </div>
-            </Card>
+            <Section inset={60}>
+              <Row href="/search" icon={<IconTile color="bg-sys-blue"><Search className={ic} strokeWidth={2.4} /></IconTile>} title="Search" chevron />
+              <Row href="/walkin" icon={<IconTile color="bg-sys-green"><UserPlus className={ic} strokeWidth={2.4} /></IconTile>} title="Walk-in" chevron />
+              <Row href="/recent" icon={<IconTile color="bg-sys-orange"><History className={ic} strokeWidth={2.4} /></IconTile>} title="My Check-ins" chevron />
+            </Section>
+
+            <Section header="Exports" inset={60}>
+              <Row
+                href={`/api/events/${event.id}/export.csv`}
+                external
+                icon={<IconTile color="bg-[#30b0c7]"><FileSpreadsheet className={ic} strokeWidth={2.2} /></IconTile>}
+                title="Download CSV"
+              />
+              <Row
+                href={`/api/events/${event.id}/backup`}
+                external
+                icon={<IconTile color="bg-sys-gray"><Printer className={ic} strokeWidth={2.2} /></IconTile>}
+                title="Backup List"
+                subtitle="Print or save as PDF"
+              />
+            </Section>
           </>
         )}
 
-        <a href="/hr-guide.html" target="_blank" rel="noreferrer" className="block text-center text-sm text-slate-400 underline">
-          Desk guide for volunteers
-        </a>
+        <Section inset={60}>
+          <Row
+            href="/hr-guide.html"
+            external
+            icon={<IconTile color="bg-sys-indigo"><BookOpen className={ic} strokeWidth={2.2} /></IconTile>}
+            title="Desk Guide"
+          />
+          {me?.role === "admin" && (
+            <Row href="/admin" icon={<IconTile color="bg-sys-gray"><Settings className={ic} strokeWidth={2.2} /></IconTile>} title="Admin" chevron />
+          )}
+        </Section>
 
-        {me?.role === "admin" && (
-          <Link href="/admin" className={`${btn("secondary", true)} w-full text-center`}>
-            ⚙️ Admin
-          </Link>
-        )}
+        <Section footer={`Signed in as ${me?.name} · ${me?.role === "admin" ? "Admin" : "HR"}`}>
+          <Row title="Sign Out" destructive onClick={() => setConfirmLogout(true)} />
+        </Section>
       </main>
+
+      <Sheet open={confirmLogout} onClose={() => setConfirmLogout(false)} title={`Signed in as ${me?.name}`}>
+        <SheetAction destructive onClick={logout}>
+          Sign Out
+        </SheetAction>
+      </Sheet>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return (
-    <div className="rounded-xl bg-slate-950 py-3">
-      <div className="text-2xl font-bold tabular-nums">{value}</div>
-      <div className="text-xs text-slate-400">{label}</div>
+    <div className="rounded-[10px] bg-bg3 px-3 py-2.5">
+      <dt className="t-caption text-label2">{label}</dt>
+      <dd className={`t-title3 tabular font-rounded ${warn ? "text-sys-orange" : ""}`}>{value}</dd>
     </div>
-  );
-}
-
-function Tile({ href, emoji, label, primary }: { href: string; emoji: string; label: string; primary?: boolean }) {
-  return (
-    <Link
-      href={href}
-      className={`flex flex-col items-center justify-center gap-1 rounded-2xl py-6 text-lg font-bold transition active:scale-[0.98] ${
-        primary ? "bg-teal-500 text-slate-950" : "border border-slate-800 bg-slate-900 hover:border-slate-600"
-      }`}
-    >
-      <span className="text-3xl" aria-hidden>
-        {emoji}
-      </span>
-      {label}
-    </Link>
   );
 }

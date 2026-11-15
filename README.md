@@ -166,6 +166,14 @@ Do this once per event.
 
 ---
 
+## Design
+
+The interface follows Apple's dark-mode design language: the system font (SF Pro on iPhone and Mac; Roboto or Segoe UI elsewhere), iOS system colors, grouped inset lists, translucent bars, a passcode-style PIN pad and bottom sheets for confirmations. Icons are [Lucide](https://lucide.dev).
+
+- **Brand color:** one token, `--color-accent` (plus `--color-on-accent` for text on filled buttons), at the top of `src/app/globals.css`. Change it there to re-theme the whole app. The QR email (`src/lib/email.ts`), backup list (`src/lib/backup.ts`) and desk guide (`public/hr-guide.html`) use a darker version, `#0a7f94`, on white.
+- **Scan results** use Apple's high-contrast green, orange and red (`--color-ok-deep`, `--color-warn-deep`, `--color-bad-deep`), readable with white text at a glance.
+- **Text styles** (`t-large`, `t-title2`, `t-body`, `t-footnote`…) mirror the iOS type scale and are defined in the same file.
+
 ## How things work (short reference)
 
 - **Check-in is atomic.** `/api/checkin` inserts into `checkins` inside a transaction. The partial unique index `one_checkin_per_day (attendee_id, event_day_id) WHERE undone_at IS NULL` makes Postgres reject a second active check-in, and a unique-violation becomes `ALREADY_CHECKED_IN` (with who and when). There is no select-then-insert.

@@ -6,35 +6,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Check-in Desk Guide</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
 <style>
 /* Layout: one A4 sheet. Header strip with fill-in lines, the three scanner result screens as signal tiles, then a two-column "what to do" area. */
 :root {
-  --bg: #eef3f3;
+  --bg: #f2f2f7;
   --paper: #ffffff;
-  --ink: #0f1c1f;
-  --muted: #536568;
-  --line: #d3dedf;
-  --accent: #0b7a70;
-  --ok: #047857;
-  --warn: #c2410c;
-  --bad: #b91c1c;
+  --ink: #000000;
+  --muted: #6c6c70;
+  --line: #d1d1d6;
+  --accent: #0a7f94;
+  --ok: #248a3d;
+  --warn: #c93400;
+  --bad: #d70015;
   --on-signal: #ffffff;
-  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
-  --body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+  --body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #091113; --paper: #101b1e; --ink: #e5eeee; --muted: #93a6a9; --line: #22363b; --accent: #2cc9b5;
+    --bg: #000000; --paper: #1c1c1e; --ink: #ffffff; --muted: #98989f; --line: #38383a; --accent: #40c8e0;
     --ok: #059669; --warn: #ea580c; --bad: #dc2626;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #091113; --paper: #101b1e; --ink: #e5eeee; --muted: #93a6a9; --line: #22363b; --accent: #2cc9b5;
+  --bg: #000000; --paper: #1c1c1e; --ink: #ffffff; --muted: #98989f; --line: #38383a; --accent: #40c8e0;
   --ok: #059669; --warn: #ea580c; --bad: #dc2626;
   color-scheme: dark;
 }
@@ -55,13 +52,13 @@ body {
   margin: 0 auto;
   background: var(--paper);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 14px;
   padding: 28px clamp(16px, 4vw, 36px);
   display: grid;
   gap: 22px;
 }
 h1, h2 { font-family: var(--display); text-wrap: balance; margin: 0; }
-h1 { font-size: clamp(26px, 5vw, 34px); line-height: 1.05; letter-spacing: -0.01em; }
+h1 { font-size: clamp(28px, 5vw, 34px); line-height: 1.1; letter-spacing: 0.01em; }
 h2 {
   font-size: 13px;
   text-transform: uppercase;
@@ -125,21 +122,21 @@ ul.rules { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 13
 
 @media print {
   :root:root:root {
-    --bg: #ffffff; --paper: #ffffff; --ink: #000000; --muted: #444444; --line: #bbbbbb; --accent: #0b6b62;
-    --ok: #047857; --warn: #c2410c; --bad: #b91c1c;
+    --bg: #ffffff; --paper: #ffffff; --ink: #000000; --muted: #444444; --line: #bbbbbb; --accent: #0a7f94;
+    --ok: #248a3d; --warn: #c93400; --bad: #d70015;
     color-scheme: light;
   }
   @page { size: A4 portrait; margin: 10mm; }
-  body { padding: 0; font-size: 9.6pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .sheet { border: 0; padding: 0; max-width: none; gap: 13px; }
+  body { padding: 0; font-size: 9pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sheet { border: 0; padding: 0; max-width: none; gap: 11px; }
   h1 { font-size: 21pt; }
   h2 { font-size: 8.6pt; margin-bottom: 6px; }
   .top { padding-bottom: 10px; }
   ol.steps, .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .cols { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; }
   .tile .screen { font-size: 11pt; padding: 7px 10px; }
-  .tile .do, .fix, ul.rules, .codebox, .note { font-size: 8.6pt; }
-  .fix th, .fix td { padding: 4px 6px 4px 0; }
+  .tile .do, .fix, ul.rules, .codebox, .note { font-size: 8.1pt; }
+  .fix th, .fix td { padding: 3px 6px 3px 0; }
   .codebox .sample { font-size: 17pt; }
   .tile, .codebox, .fix tr { break-inside: avoid; }
 }

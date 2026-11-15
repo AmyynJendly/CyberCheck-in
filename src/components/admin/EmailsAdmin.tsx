@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { Button, Card, Notice, fmtDateTime } from "../ui";
+import { Button, Notice, Section, Spinner, fmtDateTime } from "../ui";
 
 interface EmailRow {
   id: string;
@@ -32,7 +32,7 @@ export function EmailsAdmin() {
 
   const retryAll = async () => {
     setBusy(true);
-    setMsg({ tone: "info", text: "Sending, one at a time…" });
+    setMsg({ tone: "info", text: "Sending one at a time…" });
     let sent = 0;
     let failed = 0;
     try {
@@ -43,7 +43,7 @@ export function EmailsAdmin() {
         setMsg({ tone: "info", text: `Sent ${sent}, failed ${failed}…` });
         if (r.remaining <= 0) break;
       }
-      setMsg({ tone: failed ? "error" : "ok", text: `Done. Sent ${sent}, still failing ${failed}.` });
+      setMsg({ tone: failed ? "error" : "ok", text: failed ? `Sent ${sent}. ${failed} still failing; check the addresses.` : `Sent ${sent}.` });
     } catch (e) {
       setMsg({ tone: "error", text: errorMessage(e) });
     } finally {
@@ -56,7 +56,7 @@ export function EmailsAdmin() {
     setBusy(true);
     try {
       const res = await api<{ ok: boolean; error?: string }>(`/api/attendees/${r.id}/resend`, { body: {}, timeoutMs: 30_000 });
-      setMsg(res.ok ? { tone: "ok", text: `Sent to ${r.email}` } : { tone: "error", text: `Failed: ${res.error}` });
+      setMsg(res.ok ? { tone: "ok", text: `Sent to ${r.email}.` } : { tone: "error", text: `Didn't send: ${res.error}` });
     } catch (e) {
       setMsg({ tone: "error", text: errorMessage(e) });
     } finally {
@@ -68,34 +68,43 @@ export function EmailsAdmin() {
   const failedCount = rows?.filter((r) => r.email_status === "failed").length ?? 0;
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-slate-400">
-        Emails that failed, or are stuck as pending. Gmail allows about 500 emails a day; retries go out one at a time.
-      </p>
-      <Button big className="w-full" disabled={busy || !rows?.length} onClick={retryAll}>
-        Retry all failed ({failedCount})
+    <div className="space-y-7">
+      <Button size="large" className="w-full" disabled={busy || !rows?.length} onClick={retryAll}>
+        {busy ? "Sending…" : `Retry All Failed${failedCount ? ` (${failedCount})` : ""}`}
       </Button>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
-      {rows?.length === 0 && <Notice tone="ok">No failed or pending emails. 🎉</Notice>}
-      {rows?.map((r) => (
-        <Card key={r.id}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-bold">{r.full_name}</p>
-              <p className="break-all text-sm text-slate-400">{r.email}</p>
-              <p className="text-xs text-slate-500">
-                {r.event_name} · {fmtDateTime(r.created_at)} ·{" "}
-                <span className={r.email_status === "failed" ? "text-red-400" : "text-amber-400"}>{r.email_status}</span>
-              </p>
-              {r.email_error && <p className="mt-1 text-xs text-red-300">{r.email_error}</p>}
+      {rows === null && <Spinner />}
+      {rows?.length === 0 && (
+        <div className="py-8 text-center">
+          <p className="t-title3">All Emails Sent</p>
+          <p className="t-subhead mt-1 text-label2">Nothing failed or stuck.</p>
+        </div>
+      )}
+      {rows && rows.length > 0 && (
+        <Section
+          header="Failed or stuck"
+          footer="Gmail allows about 500 emails a day. Retries go out one at a time. To fix a typo in an address, use Search → Fix Email."
+        >
+          {rows.map((r) => (
+            <div key={r.id} className="flex items-start gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <p className="t-body">{r.full_name}</p>
+                <p className="t-subhead break-all text-label2">{r.email}</p>
+                <p className="t-footnote mt-0.5 text-label2">
+                  <span className={r.email_status === "failed" ? "font-semibold text-sys-red" : "font-semibold text-sys-orange"}>
+                    {r.email_status === "failed" ? "Failed" : "Pending"}
+                  </span>{" "}
+                  · {r.event_name} · {fmtDateTime(r.created_at)}
+                </p>
+                {r.email_error && <p className="t-footnote mt-1 text-sys-red/90">{r.email_error}</p>}
+              </div>
+              <Button size="small" variant="tinted" disabled={busy} onClick={() => resendOne(r)}>
+                Resend
+              </Button>
             </div>
-            <Button variant="secondary" disabled={busy} onClick={() => resendOne(r)}>
-              Resend
-            </Button>
-          </div>
-        </Card>
-      ))}
-      <p className="text-xs text-slate-500">To fix a typo in an address, use Search → Fix email.</p>
+          ))}
+        </Section>
+      )}
     </div>
   );
 }
