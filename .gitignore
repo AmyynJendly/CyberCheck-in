@@ -1,0 +1,18 @@
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# secrets: only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# DEV_EMAIL_MODE=log output
+dev-emails/
+
+.vercel
+.DS_Store
+npm-debug.log*

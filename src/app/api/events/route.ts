@@ -1,0 +1,33 @@
+// GET /api/events — active events + their days (+ which day is "today").
+import { query } from "@/lib/db";
+import { json, route } from "@/lib/http";
+import { requireStaff } from "@/lib/auth";
+import { tunisDate } from "@/lib/time";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+export const GET = route(async (req) => {
+  await requireStaff(req);
+  const today = tunisDate();
+  const r = await query<{
+    id: string;
+    slug: string;
+    name: string;
+    location: string | null;
+    days: { id: string; day_date: string; label: string | null }[];
+  }>(
+    `select e.id, e.slug, e.name, e.location,
+            coalesce(json_agg(json_build_object('id', d.id, 'day_date', d.day_date, 'label', d.label)
+                              order by d.day_date) filter (where d.id is not null), '[]') as days
+       from events e left join event_days d on d.event_id = e.id
+      where e.is_active
+      group by e.id
+      order by min(d.day_date) desc nulls last, e.created_at desc`,
+  );
+  const events = r.rows.map((e) => ({
+    ...e,
+    today_day_id: e.days.find((d) => d.day_date === today)?.id ?? null,
+  }));
+  return json({ today, events });
+});

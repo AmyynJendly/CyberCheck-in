@@ -1,0 +1,122 @@
+import { afterAll, describe, expect, it } from "vitest";
+import { GET as csvGET } from "@/app/api/events/[id]/export.csv/route";
+import { GET as backupGET } from "@/app/api/events/[id]/backup/route";
+import { GET as backupPdfGET } from "@/app/api/events/[id]/backup.pdf/route";
+import { checkInByToken } from "@/lib/checkin";
+import { createWalkIn, ingestFormSubmission } from "@/lib/attendees";
+import { csvCell } from "@/lib/csv";
+import { closePool, query } from "@/lib/db";
+import { DAY_MS, cookieFor, makeEvent, makeStaff, params, req, tokenOf } from "./helpers";
+
+afterAll(() => closePool());
+
+/** Minimal RFC 4180 parser for the test. */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') (cell += '"'), i++;
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") row.push(cell), (cell = "");
+    else if (c === "\n") row.push(cell), rows.push(row), (row = []), (cell = "");
+    else if (c !== "\r") cell += c;
+  }
+  return rows;
+}
+
+describe("CSV export", () => {
+  it("has name, email, phone, class, team, source, added_by and per-day checked_at + checked_by", async () => {
+    const ev = await makeEvent({ days: [0, 1] });
+    const sara = await makeStaff("hr", "Sara");
+    const omar = await makeStaff("hr", "Omar");
+
+    const a = await ingestFormSubmission(ev.id, "r1", {
+      full_name: 'Amine "The Root" Haddad',
+      email: "amine@example.com",
+      phone: "+216 20 123 456",
+      class_year: "2nd year, ING",
+      team_name: "=cmd|evil",
+    });
+    await checkInByToken({ staff: sara, eventId: ev.id, token: await tokenOf(a.attendeeId) });
+    await checkInByToken({ staff: omar, eventId: ev.id, token: await tokenOf(a.attendeeId), now: new Date(Date.now() + DAY_MS) });
+    const w = await createWalkIn({ eventId: ev.id, staff: omar, fields: { full_name: "Zeineb Walk", email: null, phone: null, class_year: null, team_name: "Blue" } });
+    expect(w.status).toBe("OK");
+    await ingestFormSubmission(ev.id, "r3", { full_name: "Bilel No-show", email: "bilel@example.com", phone: null, class_year: null, team_name: null });
+
+    const res = await csvGET(req("GET", `/api/events/${ev.id}/export.csv`, { cookie: await cookieFor(sara) }), params({ id: ev.id }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/csv/);
+    expect(res.headers.get("content-disposition")).toMatch(new RegExp(`attachment; filename="${ev.slug}-checkins-`));
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.subarray(0, 3).toString("hex")).toBe("efbbbf"); // UTF-8 BOM for Excel
+    const [header, ...rows] = parseCsv(bytes.subarray(3).toString("utf8"));
+    const d1 = `Day 1 (${ev.days[0].day_date})`;
+    const d2 = `Day 2 (${ev.days[1].day_date})`;
+    expect(header).toEqual([
+      "name", "email", "phone", "class_year", "team_name", "source", "added_by", "short_code", "email_status", "registered_at",
+      `${d1} checked_at`, `${d1} checked_by`, `${d1} method`,
+      `${d2} checked_at`, `${d2} checked_by`, `${d2} method`,
+    ]);
+    expect(rows).toHaveLength(3);
+    const rec = rows.map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
+    // sorted by name
+    expect(rec.map((r) => r.name)).toEqual(['Amine "The Root" Haddad', "Bilel No-show", "Zeineb Walk"]);
+
+    const amine = rec[0];
+    expect(amine).toMatchObject({
+      email: "amine@example.com",
+      phone: "+216 20 123 456",
+      class_year: "2nd year, ING",
+      team_name: "'=cmd|evil", // spreadsheet formula neutralised
+      source: "form",
+      added_by: "",
+      [`${d1} checked_by`]: "Sara",
+      [`${d1} method`]: "qr",
+      [`${d2} checked_by`]: "Omar",
+    });
+    expect(amine[`${d1} checked_at`]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(amine[`${d2} checked_at`]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+
+    expect(rec[1]).toMatchObject({ source: "form", [`${d1} checked_at`]: "", [`${d1} checked_by`]: "" });
+    expect(rec[2]).toMatchObject({ source: "walk_in", added_by: "Omar", [`${d1} checked_by`]: "Omar", [`${d1} method`]: "walk_in", [`${d2} checked_at`]: "" });
+
+    const log = await query("select staff_id from audit_log where action = 'export' and event_id = $1", [ev.id]);
+    expect(log.rows).toEqual([{ staff_id: sara.id }]);
+  });
+
+  it("csvCell keeps phone numbers and escapes quotes/commas", () => {
+    expect(csvCell("+216 20 123 456")).toBe("+216 20 123 456");
+    expect(csvCell("-5")).toBe("-5");
+    expect(csvCell("@SUM(A1)")).toBe("'@SUM(A1)");
+    expect(csvCell('a,"b"')).toBe('"a,""b"""');
+    expect(csvCell(null)).toBe("");
+  });
+});
+
+describe("backup list", () => {
+  it("printable HTML sorted by name with code and one tick box per day; backup.pdf redirects to it", async () => {
+    const ev = await makeEvent({ days: [0, 1] });
+    const hr = await makeStaff("hr");
+    await ingestFormSubmission(ev.id, "b", { full_name: "Zed", email: null, phone: null, class_year: "1st", team_name: "T" });
+    await ingestFormSubmission(ev.id, "a", { full_name: "Adam <script>", email: null, phone: null, class_year: null, team_name: null });
+    const cookie = await cookieFor(hr);
+    const res = await backupGET(req("GET", `/api/events/${ev.id}/backup`, { cookie }), params({ id: ev.id }));
+    const html = await res.text();
+    expect(res.headers.get("content-type")).toMatch(/text\/html/);
+    expect(html).toContain("@media print");
+    expect(html.indexOf("Adam &lt;script&gt;")).toBeLessThan(html.indexOf("Zed"));
+    expect(html.match(/class="box"/g)).toHaveLength(4);
+    const codes = await query<{ short_code: string }>("select short_code from attendees where event_id = $1", [ev.id]);
+    for (const c of codes.rows) expect(html).toContain(c.short_code);
+
+    const pdf = await backupPdfGET(req("GET", `/api/events/${ev.id}/backup.pdf`, { cookie }), params({ id: ev.id }));
+    expect(pdf.status).toBe(307);
+    expect(pdf.headers.get("location")).toMatch(new RegExp(`/api/events/${ev.id}/backup$`));
+  });
+});
