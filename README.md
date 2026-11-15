@@ -65,7 +65,7 @@ curl -X POST http://localhost:3000/api/form-submit \
 
 ```bash
 docker compose up -d db
-npm test            # 41 tests, against the cybertrace_test database (recreated on each run)
+npm test            # 42 tests, against the cybertrace_test database (recreated on each run)
 npm run typecheck
 npm run build
 ```
@@ -103,6 +103,7 @@ Checklist:
 - [ ] `APP_BASE_URL` set to the real `https://…vercel.app` URL
 - [ ] `DEV_EMAIL_MODE` **not** set in Vercel production
 - [ ] Each event's Apps Script has `API_URL`, `EVENT_SLUG` and `FORM_SECRET` (section 4)
+- [ ] After deploy: `https://<your-app>.vercel.app/api/health` returns `{"ok":true,"db":"up"}`, and the daily cron job appears under Vercel → Settings → Cron Jobs
 
 ---
 
@@ -120,6 +121,12 @@ Checklist:
 5. Deploy. Open `https://<your-app>.vercel.app`, log in, create the event, then connect its form (section 4).
 6. **Region (recommended):** in Settings → Functions, set the region near your Supabase region (e.g. Frankfurt `fra1`), so each query doesn't cross the Atlantic.
 7. **On the phones:** open the URL in Safari (iPhone) → Share → *Add to Home Screen*, or in Chrome (Android) → ⋮ → *Install app / Add to Home screen*. Allow camera access the first time you open **Scan**.
+
+**Keeping Supabase awake.** Supabase's free tier pauses a project after about a week without activity, which is normal between club events. While it's paused, form submissions fail. They queue in the Apps Script and go through later, so nothing is lost, but emails are delayed. To prevent this, `vercel.json` defines a **Vercel cron job** that calls `GET /api/health` once a day (04:17 UTC). The endpoint reads from the `events` table, so the database sees real activity every day. Nothing to configure: Vercel picks it up on deploy (Project → Settings → Cron Jobs shows it). `https://<your-app>.vercel.app/api/health` is also a quick status check: `{"ok":true,"db":"up"}`, or HTTP 503 if the database is unreachable.
+
+> Supabase doesn't publish exactly what counts as "activity". A daily query is the usual way to keep a project awake, but check the project status in the Supabase dashboard a week after deploying. Either way, before you open registration for an event, confirm in Supabase that the project is running (if it was paused, click **Restore**).
+
+**Volunteer guide.** `https://<your-app>.vercel.app/hr-guide.html` is a one-page quick guide for HR volunteers: logging in, what each result colour means, and what to do when something goes wrong. It's linked from the home screen and needs no login (it contains no secrets). Print it from a laptop browser (one A4 page), fill in the app address and the admin's name and phone, and leave a copy at each desk. The source is `public/hr-guide.html`.
 
 Before each event: Admin → Emails → make sure nothing is failed. The night before, open **Backup list (print / PDF)** and print it or "Save as PDF".
 
@@ -178,7 +185,7 @@ Do this once per event.
 2. **Backup list is a printable HTML page** (`/api/events/:id/backup`, print CSS, "Print / Save as PDF" button) instead of a server-generated PDF (as you asked). `/api/events/:id/backup.pdf` still exists and redirects there.
 3. **Added a `form_submissions` table** (event_id, response_id → attendee). `attendees.form_response_id` only holds one id, so without this table re-posting the *second* response of a duplicate email (e.g. via `syncAll`) would re-send the email every time. With it, every response id is idempotent.
 4. **Added `attendees.updated_at`**, used to detect emails stuck in `pending` (retried after 10 minutes).
-5. **Extra routes** the pages needed: `GET /api/auth/me`, `GET /api/checkin/recent`, `GET /api/admin/emails`, `/api/admin/events/:id/days[/:dayId]`. Check-in, manual check-in and walk-in also accept an optional `event_day_id`, which is honored **only for admins** (the spec's "let an admin pick a day manually").
+5. **Extra routes** the pages needed: `GET /api/health` (public status check, called daily by the Vercel cron in `vercel.json` to keep Supabase awake), `GET /api/auth/me`, `GET /api/checkin/recent`, `GET /api/admin/emails`, `/api/admin/events/:id/days[/:dayId]`. Check-in, manual check-in and walk-in also accept an optional `event_day_id`, which is honored **only for admins** (the spec's "let an admin pick a day manually").
 6. **Inactive events** reject check-ins with HTTP 409. Form submissions to an inactive event are still accepted, so no registration is lost.
 7. **CSV** has the required columns plus `short_code`, `email_status`, `registered_at` and a per-day `method` column. Times are Africa/Tunis. The file has a UTF-8 BOM so Excel shows accents and Arabic correctly, and cells that look like spreadsheet formulas are neutralised.
 8. **Session cookie `Secure` flag** is dropped only when `APP_BASE_URL` starts with `http://` (local development over plain http). On Vercel it is always set.

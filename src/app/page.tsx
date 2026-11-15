@@ -119,6 +119,10 @@ export default function Home() {
           </>
         )}
 
+        <a href="/hr-guide.html" target="_blank" rel="noreferrer" className="block text-center text-sm text-slate-400 underline">
+          Desk guide for volunteers
+        </a>
+
         {me?.role === "admin" && (
           <Link href="/admin" className={`${btn("secondary", true)} w-full text-center`}>
             ⚙️ Admin
