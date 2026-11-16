@@ -16,3 +16,7 @@ dev-emails/
 .vercel
 .DS_Store
 npm-debug.log*
+
+# Agent skills (local tooling)
+.agents/
+skills-lock.json
