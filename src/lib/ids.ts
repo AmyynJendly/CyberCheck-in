@@ -1,8 +1,14 @@
 import { randomBytes, randomInt, timingSafeEqual, createHash } from "node:crypto";
 
-/** 32 random bytes, base64url (43 chars). Goes in the QR as CT1:<token>. */
+// Base32 (RFC 4648): uppercase + digits only, so "CT1:<token>" fits the QR
+// alphanumeric mode. That keeps the code small (version 3, 29×29 modules) even
+// at error correction H, which survives ~30% damage: cracked or dirty screens.
+const TOKEN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+/** 26 random base32 chars (130 bits). Goes in the QR as CT1:<token>. */
 export function newQrToken(): string {
-  return randomBytes(32).toString("base64url");
+  // 256 is a multiple of 32, so `byte & 31` is uniform.
+  return Array.from(randomBytes(26), (b) => TOKEN_ALPHABET[b & 31]).join("");
 }
 
 // No 0/O, 1/I/L — easy to read aloud at the desk.

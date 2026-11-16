@@ -20,3 +20,6 @@ npm-debug.log*
 # Agent skills (local tooling)
 .agents/
 skills-lock.json
+
+# QR decoder, copied from node_modules before dev/build
+public/zxing/

@@ -1,6 +1,7 @@
 // Shared by the browser scanner and the server. No Node imports here.
 export const QR_PREFIX = "CT1:";
-const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+// 26 base32 chars (current), or 43 base64url chars (tickets issued before the switch).
+const TOKEN_RE = /^(?:[A-Z2-7]{26}|[A-Za-z0-9_-]{43})$/;
 
 export function qrContent(token: string): string {
   return QR_PREFIX + token;

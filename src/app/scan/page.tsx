@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Banknote, ChevronLeft, CircleAlert, CircleCheck, CircleX, Keyboard, UserPlus } from "lucide-react";
+import { Banknote, ChevronLeft, CircleAlert, CircleCheck, CircleX, Flashlight, FlashlightOff, Keyboard, UserPlus } from "lucide-react";
 import { useApp, useDayParam } from "@/components/AppContext";
 import { api, ApiError } from "@/components/api";
 import { useStats } from "@/components/useStats";
@@ -11,6 +11,8 @@ import { NeedEvent, Notice, OfflineBanner, Spinner, btn, fmtTime } from "@/compo
 import { parseScannedText } from "@/lib/qr-format";
 import { PaymentChoices } from "@/components/Payment";
 import { accessLabel, fmtDT, type DoorChoice, type PaymentKind, type PaymentOption } from "@/components/types";
+import { haptic } from "@/components/haptics";
+import { startQrScanner, type QrScanner } from "@/components/qrScanner";
 
 type Result =
   | {
@@ -50,14 +52,6 @@ interface RecentScan {
 const RESULT_MS = 1500;
 const DEBOUNCE_MS = 3000;
 
-function vibrate(pattern: number | number[]) {
-  try {
-    navigator.vibrate?.(pattern);
-  } catch {
-    /* iOS has no vibration API */
-  }
-}
-
 function summarize(r: Result): Omit<RecentScan, "id" | "at"> {
   switch (r.status) {
     case "OK":
@@ -90,6 +84,10 @@ export default function ScanPage() {
   const [cameraKey, setCameraKey] = useState(0);
   const [localCount, setLocalCount] = useState(0);
   const [recent, setRecent] = useState<RecentScan[]>([]);
+  const [checking, setChecking] = useState(false); // code read, waiting for the server
+  const [torch, setTorch] = useState<{ supported: boolean; on: boolean }>({ supported: false, on: false });
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const scannerRef = useRef<QrScanner | null>(null);
 
   // Refs so the scanner callback (registered once) always sees fresh values.
   const busy = useRef(false);
@@ -103,16 +101,15 @@ export default function ScanPage() {
 
   const show = useCallback((r: Result) => {
     setResult(r);
+    setChecking(false);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     if (r.status === "PAYMENT_REQUIRED") {
       // Stays up (scanning paused) until HR records the payment or taps "Didn't pay".
-      vibrate([60, 40, 60, 40, 60]);
+      haptic("bad");
       return;
     }
     setRecent((cur) => [{ id: ++seq.current, at: Date.now(), ...summarize(r) }, ...cur].slice(0, 3));
-    if (r.status === "OK") vibrate(120);
-    else if (r.status === "ALREADY_CHECKED_IN") vibrate([80, 60, 80]);
-    else vibrate([300]);
+    haptic(r.status === "OK" ? "ok" : r.status === "ALREADY_CHECKED_IN" ? "warn" : "bad");
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
       setResult(null);
@@ -132,6 +129,9 @@ export default function ScanPage() {
       if (!token) return show({ status: "INVALID" }); // no server call
       const { eventId, dayParam } = ctx.current;
       if (!eventId) return show({ status: "ERROR", message: "No event selected" });
+      // Instant feedback: the code is read; the result follows from the server.
+      haptic("tick");
+      setChecking(true);
       try {
         const r = await api<Result>("/api/checkin", { body: { event_id: eventId, token, ...dayParam }, timeoutMs: 10_000 });
         show(r);
@@ -184,56 +184,32 @@ export default function ScanPage() {
   useEffect(() => {
     if (!canScan) return;
     let cancelled = false;
-    let scanner: import("html5-qrcode").Html5Qrcode | null = null;
+    let scanner: QrScanner | null = null;
     setCameraError(null);
     setCameraOn(false);
-
-    // Scale the video to cover the screen without changing its aspect ratio.
-    const fitVideo = () => {
-      const video = document.querySelector<HTMLVideoElement>("#reader video");
-      const box = document.getElementById("reader");
-      if (!video || !box) return;
-      if (!video.videoWidth) {
-        video.addEventListener("loadedmetadata", fitVideo, { once: true });
-        return;
-      }
-      const scale = Math.max(box.clientWidth / video.videoWidth, box.clientHeight / video.videoHeight);
-      video.style.setProperty("width", `${Math.ceil(video.videoWidth * scale)}px`, "important");
-      video.style.setProperty("height", `${Math.ceil(video.videoHeight * scale)}px`, "important");
-    };
-    window.addEventListener("resize", fitVideo);
+    setTorch({ supported: false, on: false });
+    // The camera can be cut off (phone locked, app in background): restart it.
+    const restart = () => setCameraKey((k) => k + 1);
 
     (async () => {
       if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
         setCameraError("The camera only works over HTTPS. Open the app with its https:// address.");
         return;
       }
-      const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import("html5-qrcode");
-      if (cancelled) return;
-      scanner = new Html5Qrcode("reader", {
-        verbose: false,
-        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-        experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-      });
+      const video = videoRef.current;
+      if (!video) return;
       try {
-        await scanner.start(
-          { facingMode: "environment" },
-          // Decode the whole frame (no qrbox): the video is cropped to fill the
-          // screen, and a qrbox would be computed on the stretched element.
-          { fps: 12 },
-          (text) => void onScanRef.current(text),
-          () => {},
-        );
-        if (cancelled) await scanner.stop().catch(() => {});
-        else {
-          setCameraOn(true);
-          fitVideo();
-        }
+        scanner = await startQrScanner(video, (text) => void onScanRef.current(text), restart);
+        if (cancelled) return scanner.stop();
+        scannerRef.current = scanner;
+        setTorch({ supported: scanner.torchSupported, on: false });
+        setCameraOn(true);
       } catch (err) {
         if (!cancelled) {
-          const msg = String((err as Error)?.message ?? err);
+          const e = err as Error;
+          const msg = String(e?.message ?? err);
           setCameraError(
-            /permission|notallowed/i.test(msg)
+            e?.name === "NotAllowedError" || /permission|notallowed/i.test(msg)
               ? "Camera access is off. Allow the camera for this site in your browser settings, then try again."
               : `The camera didn't start: ${msg}`,
           );
@@ -241,19 +217,30 @@ export default function ScanPage() {
       }
     })();
 
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const v = videoRef.current;
+      const stream = v?.srcObject as MediaStream | null;
+      if (stream && stream.getVideoTracks().some((t) => t.readyState === "ended")) restart();
+      else void v?.play().catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       cancelled = true;
-      window.removeEventListener("resize", fitVideo);
-      const s = scanner;
-      if (s) {
-        try {
-          if (s.isScanning) void s.stop().then(() => s.clear()).catch(() => {});
-        } catch {
-          /* already stopped */
-        }
-      }
+      document.removeEventListener("visibilitychange", onVisible);
+      scanner?.stop();
+      if (scannerRef.current === scanner) scannerRef.current = null;
     };
   }, [canScan, cameraKey]);
+
+  // No decoding while a result is on screen.
+  useEffect(() => scannerRef.current?.setPaused(!!result), [result, cameraOn]);
+
+  const toggleTorch = async () => {
+    const on = !torch.on;
+    if (await scannerRef.current?.setTorch(on)) setTorch((t) => ({ ...t, on }));
+  };
 
   useEffect(
     () => () => {
@@ -304,16 +291,19 @@ export default function ScanPage() {
 
       {/* Camera */}
       <div className="absolute inset-0 [container-type:size]">
-        <div id="reader" className="absolute inset-0" />
+        <video ref={videoRef} className="absolute inset-0 h-full w-full object-cover" playsInline muted autoPlay aria-label="Camera" />
         {!cameraOn && !cameraError && (
           <div className="absolute inset-0 grid place-items-center">
             <Spinner label="Starting camera" />
           </div>
         )}
-        {/* Viewfinder: a visual guide only; the whole frame is scanned */}
-        <div className="pointer-events-none absolute left-1/2 top-1/2 h-[70cqmin] w-[70cqmin] -translate-x-1/2 -translate-y-1/2" aria-hidden>
+        {/* Viewfinder: the centre is scanned first, but the whole frame is scanned too. Green = code read. */}
+        <div
+          className={`pointer-events-none absolute left-1/2 top-1/2 h-[70cqmin] w-[70cqmin] -translate-x-1/2 -translate-y-1/2 transition-transform duration-150 ${checking ? "scale-95" : ""}`}
+          aria-hidden
+        >
           {["left-0 top-0 border-l-[3px] border-t-[3px] rounded-tl-[22px]", "right-0 top-0 border-r-[3px] border-t-[3px] rounded-tr-[22px]", "left-0 bottom-0 border-l-[3px] border-b-[3px] rounded-bl-[22px]", "right-0 bottom-0 border-r-[3px] border-b-[3px] rounded-br-[22px]"].map((c) => (
-            <span key={c} className={`absolute h-11 w-11 border-white/90 ${c}`} />
+            <span key={c} className={`absolute h-11 w-11 ${checking ? "border-sys-green" : "border-white/90"} ${c}`} />
           ))}
         </div>
         {cameraError && (
@@ -332,6 +322,17 @@ export default function ScanPage() {
           <Link href="/" aria-label="Back to home" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-black/55 text-white backdrop-blur-xl active:bg-black/70">
             <ChevronLeft className="h-6 w-6" strokeWidth={2.4} />
           </Link>
+          {torch.supported && (
+            <button
+              type="button"
+              onClick={() => void toggleTorch()}
+              aria-label={torch.on ? "Turn the flashlight off" : "Turn the flashlight on"}
+              aria-pressed={torch.on}
+              className={`grid h-10 w-10 shrink-0 place-items-center rounded-full backdrop-blur-xl ${torch.on ? "bg-white text-black" : "bg-black/55 text-white active:bg-black/70"}`}
+            >
+              {torch.on ? <Flashlight className="h-5 w-5" strokeWidth={2.2} /> : <FlashlightOff className="h-5 w-5" strokeWidth={2.2} />}
+            </button>
+          )}
           <div className="flex min-w-0 flex-1 justify-center">
             <div className="rounded-[18px] bg-black/55 px-4 py-1.5 text-center backdrop-blur-xl">
               <p className="font-rounded text-[26px] font-bold leading-none tabular text-white">
@@ -366,7 +367,7 @@ export default function ScanPage() {
             ))}
           </ul>
         ) : (
-          <p className="t-subhead mx-auto w-fit rounded-full bg-black/55 px-4 py-1.5 text-center text-white/85 backdrop-blur-xl">Point the camera at a ticket&apos;s QR code</p>
+          <p className="t-subhead mx-auto w-fit rounded-full bg-black/55 px-4 py-1.5 text-center text-white/85 backdrop-blur-xl">Hold the QR code 20–30 cm from the camera</p>
         )}
         <div className="grid grid-cols-2 gap-2.5">
           <Link href="/search" className="flex h-[50px] items-center justify-center gap-2 rounded-[14px] bg-black/55 t-headline text-white backdrop-blur-xl active:bg-black/70">

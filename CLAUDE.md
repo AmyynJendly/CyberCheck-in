@@ -3,7 +3,7 @@
 QR check-in web app (mobile PWA) for the Cybertrace club (ISSAT Sousse). Read `README.md` (features, setup) and `HOSTING.md` (deployment, stability, event-day checklist) before larger changes. `SPEC.md` is the original spec; deviations are listed at the end of the README.
 
 ## Stack
-Next.js 15 (App Router) + TypeScript + Tailwind v4 · Postgres via `pg` (Supabase in production, `DATABASE_URL`) · Nodemailer → Gmail SMTP · `qrcode` / `html5-qrcode` · Google Apps Script (`apps-script/Code.gs`) · Vitest.
+Next.js 15 (App Router) + TypeScript + Tailwind v4 · Postgres via `pg` (Supabase in production, `DATABASE_URL`) · Nodemailer → Gmail SMTP · `qrcode` / `zxing-wasm` (scanner; its .wasm is copied to `public/zxing/` before dev/build) · Google Apps Script (`apps-script/Code.gs`) · Vitest.
 
 ## Layout
 - `src/lib/checkin.ts` — ALL check-in logic (scan, manual, pay-then-check-in, claim, undo). One lookup query + one atomic write per scan.

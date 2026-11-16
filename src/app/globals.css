@@ -96,29 +96,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* html5-qrcode renders its own <video>; make it fill the scanner. */
-/* html5-qrcode forces position: relative and pixel sizes; pin it full-bleed. */
-#reader {
-  position: absolute !important;
-  inset: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  border: 0 !important;
-}
-/* Sized in JS (scan page) to "cover" while keeping the camera's aspect ratio:
-   the decoder copies the element's box, so it must never be stretched. */
-#reader video {
-  position: absolute !important;
-  left: 50% !important;
-  top: 50% !important;
-  max-width: none !important;
-  transform: translate(-50%, -50%);
-}
-#reader img[alt="Info icon"],
-#reader > div:not(:has(video)) {
-  display: none !important;
-}
-
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   15%, 55% { transform: translateX(-10px); }

@@ -135,7 +135,7 @@ describe("email content", () => {
     expect(m.text).toContain("Don't share this code. It works once per day.");
     expect(m.text).toContain("ISSAT Sousse");
     expect(m.png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
-    expect(qrContent(a.rows[0].qr_token)).toMatch(/^CT1:[A-Za-z0-9_-]{43}$/);
+    expect(qrContent(a.rows[0].qr_token)).toMatch(/^CT1:[A-Z2-7]{26}$/);
   });
 
   it("Gmail not configured → the email waits in the queue (not failed); admin retry sends it once fixed", async () => {
