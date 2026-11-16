@@ -148,9 +148,11 @@ Do this once per event.
 2. **Create the Google Form** (with the club Google account) with these questions. The titles must match exactly (case doesn't matter):
    - `Full name`: short answer, required
    - `Email`: short answer, required (Response validation → Text → Email is a good idea)
-   - `Phone`: short answer
-   - `Class / Year`: short answer or dropdown
+   - `Phone` or `Phone number`: short answer
+   - `Class / Year`: short answer or dropdown. Or `Academic field` (or `Academic level`) plus `Academic year`, stored together as e.g. "Computer science · Year 2"
    - `Team name`: short answer, optional
+
+   Other questions are ignored, except the first checkbox question, which is stored as the enrollment (see *Paid days and membership*). Accepted titles are in `QUESTIONS` at the top of `Code.gs`.
 
    Alternatively, turn on Settings → Responses → *Collect email addresses*. The script uses the `Email` question first and falls back to the collected address.
 3. **Open the script editor:** in the form, click ⋮ (top right) → **Script editor** (Apps Script). Delete the sample code and paste the entire content of [`apps-script/Code.gs`](apps-script/Code.gs). Save (💾) and name the project, e.g. "Cybertrace check-in".

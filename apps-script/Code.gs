@@ -21,13 +21,16 @@
  *                     nudges the app to send any QR emails still waiting)
  */
 
-// Exact question titles in the form (matching is case-insensitive).
+// Exact question titles in the form (matching is case-insensitive). The first
+// title found in the form is used.
 var QUESTIONS = {
-  full_name: 'Full name',
-  email: 'Email',
-  phone: 'Phone',
-  class_year: 'Class / Year',
-  team_name: 'Team name'
+  full_name: ['Full name'],
+  email: ['Email'],
+  phone: ['Phone', 'Phone number'],
+  class_year: ['Class / Year'],
+  study: ['Academic field', 'Academic level'], // joined with academic_year into class_year
+  academic_year: ['Academic year'],
+  team_name: ['Team name']
 };
 
 var PENDING_KEY = 'PENDING_RESPONSES'; // JSON: { "<responseId>": { attempts, lastError, since } }
@@ -208,7 +211,20 @@ function buildPayload_(response, slug) {
     var isEnroll = enrollTitle ? title === enrollTitle : item.getType() === FormApp.ItemType.CHECKBOX;
     if (isEnroll && !enrollment) enrollment = value;
   });
-  var get = function (key) { return answers[QUESTIONS[key].toLowerCase()] || ''; };
+  var get = function (key) {
+    var titles = QUESTIONS[key];
+    for (var i = 0; i < titles.length; i++) {
+      var v = answers[titles[i].toLowerCase()];
+      if (v) return v;
+    }
+    return '';
+  };
+
+  var classYear = get('class_year');
+  if (!classYear) {
+    var year = get('academic_year');
+    classYear = [get('study'), year ? 'Year ' + year : ''].filter(Boolean).join(' · ');
+  }
 
   var email = get('email');
   if (!email) {
@@ -220,7 +236,7 @@ function buildPayload_(response, slug) {
     full_name: get('full_name'),
     email: email,
     phone: get('phone'),
-    class_year: get('class_year'),
+    class_year: classYear,
     team_name: get('team_name'),
     enrollment: enrollment
   };
