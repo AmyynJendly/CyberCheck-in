@@ -1,25 +1,7 @@
 import { query } from "./db";
 import { dayLabel, getEventDays } from "./events";
-import { enrollParts } from "./stand";
+import { tickableDays, tickedDay } from "./ticks";
 import { tunisDateTime } from "./time";
-
-const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-
-/**
- * Did the form's checkbox answer tick this day? A day is ticked when one of the
- * answers starts with the day's label: label "Offensive Web 101" matches the
- * option "Offensive Web 101(from interception to exploitation)".
- */
-export function tickedDay(enrollment: string | null, label: string): boolean {
-  const l = norm(label);
-  return !!l && enrollParts(enrollment ?? "").some((p) => norm(p).startsWith(l));
-}
-
-/** Days that at least one registration ticked: only these get a "ticked" column. */
-function tickableDays<D extends { id: string; label: string | null; day_date: string }>(days: D[], enrollments: (string | null)[]): Set<string> {
-  const filled = enrollments.filter((e): e is string => !!e);
-  return new Set(days.filter((d) => filled.some((e) => tickedDay(e, dayLabel(d)))).map((d) => d.id));
-}
 
 /** RFC 4180 cell + spreadsheet formula-injection guard (keeps phone numbers like +216… intact). */
 export function csvCell(value: unknown): string {

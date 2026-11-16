@@ -10,6 +10,7 @@ import { Button, NeedEvent, Notice, SearchField, Segmented, Sheet, SheetAction, 
 import { StandImport } from "@/components/admin/StandImport";
 import { errorMessage as errMsg } from "@/components/api";
 import { fmtDT } from "@/components/types";
+import { tickableDays, tickedDay } from "@/lib/ticks";
 
 interface Day {
   id: string;
@@ -86,6 +87,8 @@ export default function AdminPeople() {
   }, [load]);
 
   const todayId = activeDay?.id;
+  // Days that the form's checkbox can tick (their label starts one of its options).
+  const tickable = useMemo(() => (data ? tickableDays(data.days, data.people.map((p) => p.enrollment)) : new Set<string>()), [data]);
   const rows = useMemo(() => {
     if (!data) return [];
     const term = q.trim().toLowerCase();
@@ -191,8 +194,10 @@ export default function AdminPeople() {
                     <p className="truncate">{p.email ?? <span className="text-label3">no email</span>}</p>
                     <p className="t-footnote text-label2">{p.phone}</p>
                   </td>
-                  <td className="px-3 py-2.5 t-footnote text-label2" title={p.enrollment ?? undefined}>
-                    {[p.enroll_sessions && "Sessions", p.enroll_main && "Main"].filter(Boolean).join(" + ") || (p.enrollment ? "?" : "—")}
+                  <td className="max-w-[220px] px-3 py-2.5 t-footnote text-label2" title={p.enrollment ?? undefined}>
+                    {tickable.size
+                      ? data.days.filter((d) => tickable.has(d.id) && tickedDay(p.enrollment, d.label || d.day_date)).map((d) => d.label || d.day_date).join(", ") || "—"
+                      : [p.enroll_sessions && "Sessions", p.enroll_main && "Main"].filter(Boolean).join(" + ") || (p.enrollment ? "?" : "—")}
                   </td>
                   <td className="px-3 py-2.5 t-footnote">
                     {p.payments.length
@@ -208,14 +213,19 @@ export default function AdminPeople() {
                   </td>
                   {data.days.map((d) => {
                     const c = p.days[d.id];
+                    const notTicked = !!c && tickable.has(d.id) && !tickedDay(p.enrollment, d.label || d.day_date);
                     return (
                       <td key={d.id} className="px-2 py-2.5 text-center">
                         {c ? (
                           <span
-                            className="inline-grid h-6 w-6 place-items-center rounded-full bg-sys-green/20 text-sys-green"
-                            title={`${fmtTime(c.checked_at)} by ${c.by}${c.paid ? ` · paid ${fmtDT(c.paid.amount)} (${c.paid.kind})` : ""}`}
+                            className={`inline-grid h-6 w-6 place-items-center rounded-full ${notTicked ? "bg-sys-orange/20 text-sys-orange" : "bg-sys-green/20 text-sys-green"}`}
+                            title={`${fmtTime(c.checked_at)} by ${c.by}${c.paid ? ` · paid ${fmtDT(c.paid.amount)} (${c.paid.kind})` : ""}${notTicked ? " · didn't tick this session" : ""}`}
                           >
-                            <Check className="h-4 w-4" strokeWidth={3} aria-label={`Checked in at ${fmtTime(c.checked_at)} by ${c.by}`} />
+                            <Check
+                              className="h-4 w-4"
+                              strokeWidth={3}
+                              aria-label={`Checked in at ${fmtTime(c.checked_at)} by ${c.by}${notTicked ? ", didn't tick this session" : ""}`}
+                            />
                           </span>
                         ) : (
                           <span className="text-label3" aria-label="Not checked in">

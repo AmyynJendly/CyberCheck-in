@@ -4,7 +4,8 @@ import { GET as backupGET } from "@/app/api/events/[id]/backup/route";
 import { GET as backupPdfGET } from "@/app/api/events/[id]/backup.pdf/route";
 import { checkInByToken } from "@/lib/checkin";
 import { createWalkIn, ingestFormSubmission } from "@/lib/attendees";
-import { csvCell, tickedDay } from "@/lib/csv";
+import { csvCell } from "@/lib/csv";
+import { tickedDay } from "@/lib/ticks";
 import { closePool, query } from "@/lib/db";
 import { DAY_MS, cookieFor, makeEvent, makeStaff, params, req, tokenOf } from "./helpers";
 

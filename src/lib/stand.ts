@@ -13,6 +13,7 @@ import { HttpError } from "./http";
 import { cleanAttendeeFields, ingestFormSubmission } from "./attendees";
 import { findValidMembership, grantMembershipTx, parseTable, phoneKey } from "./members";
 import { getEventDays, type EventRow } from "./events";
+import { enrollParts } from "./ticks";
 import { tunisDate } from "./time";
 import type { Staff } from "./auth";
 
@@ -34,11 +35,6 @@ export function guessMeaning(value: string): EnrollMeaning {
   const s = SESSIONS_RE.test(value);
   const m = MAIN_RE.test(value);
   return s && m ? "both" : s ? "sessions" : m ? "main" : "none";
-}
-
-/** Split a checkbox cell ("Sessions, Main event") into its answers. */
-export function enrollParts(cell: string | undefined): string[] {
-  return (cell ?? "").split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean);
 }
 
 export interface SheetAnalysis {

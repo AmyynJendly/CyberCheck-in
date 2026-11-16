@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { BookOpen, Check, History, LayoutDashboard, ScanLine, Search, UserPlus } from "lucide-react";
+import { Check, History, LayoutDashboard, ScanLine, Search, UserPlus } from "lucide-react";
 import { useApp } from "@/components/AppContext";
 import { api } from "@/components/api";
 import { useStats } from "@/components/useStats";
@@ -151,16 +151,6 @@ export default function Home() {
                 title="My Check-ins"
                 subtitle="Undo a mistake (10 min)"
                 chevron
-              />
-              <Row
-                href="/hr-guide.html"
-                external
-                icon={
-                  <IconTile color="bg-sys-indigo">
-                    <BookOpen className={ic} strokeWidth={2.2} />
-                  </IconTile>
-                }
-                title="Desk Guide"
               />
             </Section>
           </>

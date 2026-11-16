@@ -134,7 +134,6 @@ Checklist:
 
 > Supabase doesn't publish exactly what counts as "activity". A daily query is the usual way to keep a project awake, but check the project status in the Supabase dashboard a week after deploying. Either way, before you open registration for an event, confirm in Supabase that the project is running (if it was paused, click **Restore**).
 
-**Volunteer guide.** `https://<your-app>.vercel.app/hr-guide.html` is a one-page quick guide for HR volunteers: logging in, what each result colour means, and what to do when something goes wrong. It's linked from the home screen and needs no login (it contains no secrets). Print it from a laptop browser (one A4 page), fill in the app address and the admin's name and phone, and leave a copy at each desk. The source is `public/hr-guide.html`.
 
 Before each event, follow the checklist in [`HOSTING.md`](HOSTING.md): health check, load test, test email, nothing failed in Admin → Emails, backup list printed.
 
@@ -206,13 +205,13 @@ Example, the bootcamp: Session 1 *Free for everyone*; Sessions 2–4 *Members on
 - **Sending:** every registration is queued and sent by one sender at a time over a single Gmail connection (Gmail blocks bursts). Temporary Gmail errors leave the email *waiting* and it's retried automatically (after each registration, and every 5 minutes by the form's script); after 5 failed tries it's marked *failed*. Admin → Emails shows both, with *Send Waiting Now* and *Retry Failed*.
 - **Paste registrations:** Admin → Emails → *Add registrations by pasting* (name, email, phone with a header row, e.g. from the Google Form's response sheet). Everyone with an email gets their QR. Pasting the same list again changes nothing.
 - **CSV per session:** Admin → Overview → *CSV* on each day's row: the people checked in that day, with time, staff member and payment. *Full CSV* has everyone and every day. CSV and the backup list are admin-only.
-- **Attended but not ticked:** when the form has a checkbox of sessions and a day's label is the start of one of its options (day "Offensive Web 101" ↔ option "Offensive Web 101(from interception to exploitation)"), the CSVs compare attendance with the ticks. The full CSV gets a `ticked` column per such day (`yes`, or `NOT TICKED` if they came without ticking it) and an `attended_not_ticked` column listing those days; the day CSV gets a `ticked` column. People with no form answer (walk-ins, the main-event form) count as not ticked. It's only a note: entry still depends on the day's rule (members, payment), not on the ticks.
+- **Attended but not ticked:** when the form has a checkbox of sessions and a day's label is the start of one of its options (day "Offensive Web 101" ↔ option "Offensive Web 101(from interception to exploitation)"), the CSVs compare attendance with the ticks. The full CSV gets a `ticked` column per such day (`yes`, or `NOT TICKED` if they came without ticking it) and an `attended_not_ticked` column listing those days; the day CSV gets a `ticked` column. In Admin → People, the *Enrolled* column lists the ticked sessions and an orange check marks a session attended without ticking it. People with no form answer (walk-ins, the main-event form) count as not ticked. It's only a note: entry still depends on the day's rule (members, payment), not on the ticks.
 
 ## Design
 
 The interface follows Apple's dark-mode design language: the system font (SF Pro on iPhone and Mac; Roboto or Segoe UI elsewhere), iOS system colors, grouped inset lists, translucent bars, a passcode-style PIN pad and bottom sheets for confirmations. Icons are [Lucide](https://lucide.dev).
 
-- **Brand color:** one token, `--color-accent` (plus `--color-on-accent` for text on filled buttons), at the top of `src/app/globals.css`. Change it there to re-theme the whole app. The QR email (`src/lib/email.ts`), backup list (`src/lib/backup.ts`) and desk guide (`public/hr-guide.html`) use a darker version, `#0a7f94`, on white.
+- **Brand color:** one token, `--color-accent` (plus `--color-on-accent` for text on filled buttons), at the top of `src/app/globals.css`. Change it there to re-theme the whole app. The QR email (`src/lib/email.ts`) and backup list (`src/lib/backup.ts`) use a darker version, `#0a7f94`, on white.
 - **Scan results** use Apple's high-contrast green, orange and red (`--color-ok-deep`, `--color-warn-deep`, `--color-bad-deep`), readable with white text at a glance.
 - **Text styles** (`t-large`, `t-title2`, `t-body`, `t-footnote`…) mirror the iOS type scale and are defined in the same file.
 
