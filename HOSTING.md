@@ -13,7 +13,7 @@ The short version: **Vercel (Hobby, free) in Frankfurt + Supabase (Free) in Fran
 | Registration rush (everyone fills the form at once) | Google Forms takes the load (Google's servers). The Apps Script forwards each response and retries every 5 minutes if the app is unreachable, so no registration is lost. |
 | Gmail blocking a burst of emails | Emails go through a **queue with a single sender** over one reused Gmail connection. Gmail errors leave emails waiting and they're retried automatically; nothing is sent twice (tested with 40 simultaneous registrations). |
 | Bad mobile network at the door | The scanner shows a red "No connection" bar and a "Not saved, scan again" screen. Re-scanning is always safe (it can't double check-in or double charge). |
-| Server far from the database | `vercel.json` pins the functions to **Frankfurt (`fra1`)**. Put Supabase in Frankfurt too. Every round trip is then ~1–2 ms instead of ~90 ms (US default). |
+| Server far from the database | `vercel.json` pins the functions to **Dublin (`dub1`)**, the same region as the Supabase project (eu-west-1, Ireland). If Supabase is ever moved, change `regions` in `vercel.json` to match (Frankfurt = `fra1`). Every round trip is then ~1–2 ms instead of ~90 ms (US default). |
 | Database asleep (Supabase free pauses after ~7 idle days) | A daily Vercel cron calls `/api/health`, which reads the database. Still, check the project is running before registration opens. |
 
 Things that typically make event sites crash, and that this setup avoids: free hosts that go to sleep (the first visitor waits 30–60 s), one small server handling everything, Google Sheets as a database, and no rule in the database against double check-ins.
@@ -33,7 +33,7 @@ Things that typically make event sites crash, and that this setup avoids: free h
 1. <https://vercel.com/new> → import the GitHub repo. Plan: **Hobby** (free; fine for a student club, not for commercial use).
 2. Environment variables (Settings → Environment Variables): `DATABASE_URL` (transaction pooler, port 6543), `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SESSION_SECRET`, `APP_BASE_URL` (your `https://…vercel.app`), `PG_POOL_MAX=5`. Do **not** set `DEV_EMAIL_MODE`.
 3. Deploy. Then check:
-   - Settings → Functions → **Region shows Frankfurt (fra1)** (set by `vercel.json`).
+   - Settings → Functions → **Region shows Dublin (dub1)** (set by `vercel.json`, matching Supabase eu-west-1).
    - Settings → Cron Jobs shows `/api/health` daily.
    - `https://<your-app>.vercel.app/api/health` → `{"ok":true,"db":"up"}`.
 
