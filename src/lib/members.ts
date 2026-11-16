@@ -28,7 +28,7 @@ export interface MemberRow {
   email: string | null;
   phone: string | null;
   valid_until: string;
-  source: "import" | "desk" | "manual";
+  source: "import" | "desk" | "manual" | "claimed" | "stand";
 }
 
 /**
@@ -60,9 +60,19 @@ export async function findValidMembership(
  */
 export async function grantMembershipTx(
   c: PoolClient,
-  p: { fullName: string; email: string | null; phone: string | null; staff: Staff; validUntil?: string },
+  p: {
+    fullName: string;
+    email: string | null;
+    phone: string | null;
+    staff: Staff;
+    validUntil?: string;
+    /** desk = paid at the door · stand = paid at the registration stand · claimed = "already a member" (no money, needs admin review) */
+    source?: "desk" | "stand" | "claimed";
+  },
 ): Promise<string> {
   const validUntil = p.validUntil ?? defaultValidUntil();
+  const source = p.source ?? "desk";
+  const review = source === "claimed";
   const key = phoneKey(p.phone);
   const existing = await c.query<{ id: string }>(
     `select id from members
@@ -71,13 +81,16 @@ export async function grantMembershipTx(
     [p.email, key],
   );
   if (existing.rows[0]) {
-    await c.query("update members set valid_until = greatest(valid_until, $2), updated_at = now() where id = $1", [existing.rows[0].id, validUntil]);
+    await c.query(
+      "update members set valid_until = greatest(valid_until, $2), needs_review = needs_review or $3, updated_at = now() where id = $1",
+      [existing.rows[0].id, validUntil, review],
+    );
     return existing.rows[0].id;
   }
   const r = await c.query<{ id: string }>(
-    `insert into members (full_name, email, phone, phone_key, valid_until, source, added_by_staff_id)
-     values ($1, $2, $3, $4, $5, 'desk', $6) returning id`,
-    [p.fullName, p.email, p.phone, key, validUntil, p.staff.id],
+    `insert into members (full_name, email, phone, phone_key, valid_until, source, added_by_staff_id, needs_review)
+     values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+    [p.fullName, p.email, p.phone, key, validUntil, source, p.staff.id, review],
   );
   return r.rows[0].id;
 }
@@ -118,13 +131,21 @@ function splitLine(line: string, sep: string): string[] {
   return out;
 }
 
+/** Split pasted spreadsheet text (tab, comma or semicolon separated) into rows of cells. */
+export function parseTable(text: string): string[][] {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return [];
+  const sep = lines[0].includes("\t") ? "\t" : lines[0].split(";").length > lines[0].split(",").length ? ";" : ",";
+  return lines.map((l) => splitLine(l, sep));
+}
+
 /**
  * Parse rows pasted from a spreadsheet (tab-separated) or a CSV (comma or
  * semicolon). A header row is recognised in English, French or Arabic; with no
  * header, columns are guessed from their content.
  */
 export function parseMemberList(text: string): { rows: ParsedMember[]; skipped: number } {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
   if (!lines.length) return { rows: [], skipped: 0 };
   const sep = lines[0].includes("\t") ? "\t" : lines[0].split(";").length > lines[0].split(",").length ? ";" : ",";
   const first = splitLine(lines[0], sep).map((h) => h.toLowerCase().replace(/\s+/g, " ").trim());
@@ -268,5 +289,40 @@ export async function linkAttendeeToMember(staff: Staff, attendeeId: string, mem
     if (!a.rows[0]) throw new HttpError(404, "ATTENDEE_NOT_FOUND", "Attendee not found.");
     await audit({ staffId: staff.id, action: "link_member", eventId: a.rows[0].event_id, attendeeId, details: { member_id: memberId, member_name: m.rows[0].full_name } }, c);
     return { ok: true, valid_until: m.rows[0].valid_until };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Review of "already a member" claims made at the door
+// ---------------------------------------------------------------------------
+
+export async function membersToReview() {
+  const r = await query<MemberRow & { needs_review: boolean; created_at: string; updated_at: string; claimed_by: string | null; events: string | null }>(
+    `select m.id, m.full_name, m.email, m.phone, m.valid_until, m.source, m.needs_review, m.created_at, m.updated_at,
+            s.name as claimed_by,
+            (select string_agg(distinct e.name, ', ') from attendees a join events e on e.id = a.event_id where a.member_id = m.id) as events
+       from members m left join staff s on s.id = m.added_by_staff_id
+      where m.needs_review
+      order by m.updated_at desc`,
+  );
+  return r.rows;
+}
+
+/** confirm: keep the membership. reject: end it now (they'll be asked to pay next time). */
+export async function reviewMember(admin: Staff, id: string, decision: "confirm" | "reject") {
+  return withTransaction(async (c) => {
+    const cur = await c.query<{ full_name: string; source: string }>("select full_name, source from members where id = $1 and needs_review for update", [id]);
+    const m = cur.rows[0];
+    if (!m) throw new HttpError(404, "NOT_TO_REVIEW", "This membership isn't waiting for review.");
+    if (decision === "confirm") {
+      await c.query("update members set needs_review = false, updated_at = now() where id = $1", [id]);
+    } else if (m.source === "claimed") {
+      await c.query("delete from members where id = $1", [id]); // attendees.member_id → null
+    } else {
+      // An older record that was extended by the claim: expire it again.
+      await c.query("update members set needs_review = false, valid_until = current_date - 1, updated_at = now() where id = $1", [id]);
+    }
+    await audit({ staffId: admin.id, action: decision === "confirm" ? "confirm_member" : "reject_member", details: { member_id: id, full_name: m.full_name } }, c);
+    return { ok: true };
   });
 }

@@ -15,11 +15,13 @@ interface Payment {
   attendee_name: string;
   staff_id: string;
   staff_name: string;
-  day_label: string;
+  day_label: string | null;
+  channel: "desk" | "stand";
   voided_at: string | null;
   voided_by: string | null;
 }
 interface Summary {
+  stand: { memberships: number; entries: number; total: number };
   payments: Payment[];
   by_staff: { staff_id: string; staff_name: string; memberships: number; entries: number; total: number }[];
   total: number;
@@ -91,7 +93,7 @@ export default function AdminCashPage() {
           {data && (
             <>
               <section className="rounded-[16px] bg-bg2 p-5">
-                <p className="t-footnote font-semibold uppercase tracking-wide text-label2">{scope === "day" ? "Collected today" : "Collected, all days"}</p>
+                <p className="t-footnote font-semibold uppercase tracking-wide text-label2">{scope === "day" ? "Door cash today" : "Door cash, all days"}</p>
                 <p className="mt-1 font-rounded text-[52px] font-bold leading-none tabular">{fmtDT(data.total)}</p>
                 <p className="t-subhead mt-3 text-label2">
                   You: <span className="font-semibold text-label tabular">{fmtDT(mine?.total ?? 0)}</span>
@@ -99,8 +101,21 @@ export default function AdminCashPage() {
                 </p>
               </section>
 
+                {data.stand.total > 0 && (
+                <Section header="Paid at the registration stand" footer="From the imported stand sheet. Not part of the cash HR holds at the door.">
+                  <div className="flex min-h-[52px] items-center gap-3 px-4 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="t-body">All days</p>
+                      <p className="t-footnote text-label2">
+                        {data.stand.memberships} membership{data.stand.memberships === 1 ? "" : "s"} · {data.stand.entries} main-event entr{data.stand.entries === 1 ? "y" : "ies"}
+                      </p>
+                    </div>
+                    <span className="t-headline tabular">{fmtDT(data.stand.total)}</span>
+                  </div>
+                </Section>
+              )}
               {data.by_staff.length > 0 && (
-                <Section header="By staff member" footer="Each person hands over the cash they took. Totals leave out cancelled payments.">
+                <Section header="By staff member" footer="Cash taken at the door. Each person hands over what they took. Totals leave out cancelled payments.">
                   {data.by_staff.map((s) => (
                     <div key={s.staff_id} className="flex min-h-[52px] items-center gap-3 px-4 py-2">
                       <div className="min-w-0 flex-1">
@@ -128,8 +143,8 @@ export default function AdminCashPage() {
                         <div className="min-w-0 flex-1">
                           <p className={`t-body truncate ${p.voided_at ? "text-label2 line-through" : ""}`}>{p.attendee_name}</p>
                           <p className="t-footnote text-label2">
-                            {fmtTime(p.created_at)} · {p.staff_name} · {p.kind === "membership" ? "Membership" : "Entry"}
-                            {scope === "all" && ` · ${p.day_label}`}
+                            {fmtTime(p.created_at)} · {p.channel === "stand" ? "stand sheet" : p.staff_name} · {p.kind === "membership" ? "Membership" : "Entry"}
+                            {scope === "all" && p.day_label && ` · ${p.day_label}`}
                             {p.voided_at && ` · cancelled by ${p.voided_by}`}
                           </p>
                         </div>

@@ -3,7 +3,8 @@ import { query, withTransaction, isUniqueViolation } from "./db";
 import { audit } from "./audit";
 import { HttpError } from "./http";
 import { newQrToken, newShortCode } from "./ids";
-import { insertCheckin, insertPaymentTx, isDayFull, paymentOptions, type PaymentKind, type PaymentOption } from "./checkin";
+import { insertCheckin, insertPaymentTx, isDayFull, paymentOptions, type DoorChoice, type PaymentKind, type PaymentOption } from "./checkin";
+import { audit as auditTx } from "./audit";
 import { findValidMembership, grantMembershipTx } from "./members";
 import { dayLabel, requireEvent, resolveEventDay } from "./events";
 import { cleanText, looksLikeEmail, normalizeEmail } from "./validate";
@@ -15,17 +16,37 @@ export interface AttendeeFields {
   phone: string | null;
   class_year: string | null;
   team_name: string | null;
+  /** The form's "what do you enroll in" checkbox answer, as written (e.g. "Sessions, Main event"). */
+  enrollment?: string | null;
+  enroll_sessions?: boolean | null;
+  enroll_main?: boolean | null;
+}
+
+const SESSIONS_RE = /session|s[ée]ance|formation|atelier|workshop|training|cours|class/i;
+const MAIN_RE = /main|comp[ée]t|ctf|final|principal|hackathon|challenge|concours/i;
+
+/** Best guess at what a checkbox answer means. null = can't tell. */
+export function deriveEnrollment(raw: string | null | undefined): { enroll_sessions: boolean | null; enroll_main: boolean | null } {
+  if (!raw?.trim()) return { enroll_sessions: null, enroll_main: null };
+  const parts = raw.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean);
+  const sessions = parts.some((x) => SESSIONS_RE.test(x));
+  const main = parts.some((x) => MAIN_RE.test(x));
+  if (!sessions && !main) return { enroll_sessions: null, enroll_main: null };
+  return { enroll_sessions: sessions, enroll_main: main };
 }
 
 export function cleanAttendeeFields(body: Record<string, unknown>): AttendeeFields {
   const full_name = cleanText(body.full_name, 200);
   if (!full_name) throw new HttpError(400, "BAD_REQUEST", "Full name is required.");
+  const enrollment = cleanText(body.enrollment, 300);
   return {
     full_name,
     email: normalizeEmail(body.email),
     phone: cleanText(body.phone, 40),
     class_year: cleanText(body.class_year, 80),
     team_name: cleanText(body.team_name, 120),
+    enrollment,
+    ...deriveEnrollment(enrollment),
   };
 }
 
@@ -70,7 +91,18 @@ export interface IngestResult {
  * Idempotent on response_id (form_submissions PK), deduplicated on email
  * (attendees_event_email_uniq). Safe under concurrent duplicate posts.
  */
-export async function ingestFormSubmission(eventId: string, responseId: string, fields: AttendeeFields): Promise<IngestResult> {
+/**
+ * `resendExisting` (default true, the form's behaviour): the same email
+ * submitting again gets their QR again. Imports pass false, so people who
+ * already received their QR aren't emailed twice.
+ */
+export async function ingestFormSubmission(
+  eventId: string,
+  responseId: string,
+  fields: AttendeeFields,
+  opts: { resendExisting?: boolean } = {},
+): Promise<IngestResult> {
+  const resend = opts.resendExisting ?? true;
   return withTransaction(async (c) => {
     // Claim the response id. A concurrent duplicate blocks here until we commit, then gets nothing.
     const claim = await c.query(
@@ -91,22 +123,28 @@ export async function ingestFormSubmission(eventId: string, responseId: string, 
 
     const emailStatus = fields.email ? "pending" : "none";
     const row = await insertWithCodes(c, async (qrToken, shortCode) => {
-      const r = await c.query<{ id: string; inserted: boolean }>(
+      const r = await c.query<{ id: string; inserted: boolean; email_status: string }>(
         `insert into attendees
            (event_id, full_name, email, phone, class_year, team_name, source,
-            form_response_id, qr_token, short_code, email_status)
-         values ($1, $2, $3, $4, $5, $6, 'form', $7, $8, $9, $10)
+            form_response_id, qr_token, short_code, email_status, enrollment, enroll_sessions, enroll_main)
+         values ($1, $2, $3, $4, $5, $6, 'form', $7, $8, $9, $10, $12, $13, $14)
          on conflict (event_id, email) where email is not null do update set
            full_name        = excluded.full_name,
            phone            = coalesce(excluded.phone, attendees.phone),
            class_year       = coalesce(excluded.class_year, attendees.class_year),
            team_name        = coalesce(excluded.team_name, attendees.team_name),
            form_response_id = coalesce(attendees.form_response_id, excluded.form_response_id),
-           email_status     = 'pending',
-           email_error      = null,
+           enrollment       = coalesce(excluded.enrollment, attendees.enrollment),
+           enroll_sessions  = coalesce(excluded.enroll_sessions, attendees.enroll_sessions),
+           enroll_main      = coalesce(excluded.enroll_main, attendees.enroll_main),
+           email_status     = case when $11::boolean or attendees.email_status <> 'sent' then 'pending' else attendees.email_status end,
+           email_error      = case when $11::boolean or attendees.email_status <> 'sent' then null else attendees.email_error end,
            updated_at       = now()
-         returning id, (xmax = 0) as inserted`,
-        [eventId, fields.full_name, fields.email, fields.phone, fields.class_year, fields.team_name, responseId, qrToken, shortCode, emailStatus],
+         returning id, (xmax = 0) as inserted, email_status`,
+        [
+          eventId, fields.full_name, fields.email, fields.phone, fields.class_year, fields.team_name, responseId, qrToken, shortCode, emailStatus,
+          resend, fields.enrollment ?? null, fields.enroll_sessions ?? null, fields.enroll_main ?? null,
+        ],
       );
       return r.rows[0];
     });
@@ -114,7 +152,7 @@ export async function ingestFormSubmission(eventId: string, responseId: string, 
     await c.query("update form_submissions set attendee_id = $3 where event_id = $1 and response_id = $2", [eventId, responseId, row.id]);
     const outcome: IngestOutcome = row.inserted ? "created" : "updated";
     await audit({ action: "form_submit", eventId, attendeeId: row.id, details: { response_id: responseId, outcome } }, c);
-    return { outcome, attendeeId: row.id, sendEmail: !!fields.email };
+    return { outcome, attendeeId: row.id, sendEmail: row.email_status === "pending" };
   });
 }
 
@@ -135,6 +173,7 @@ export type WalkInResult =
       email_queued: boolean;
       is_member: boolean;
       payment: { kind: PaymentKind; amount: number } | null;
+      claimed?: boolean;
     }
   | { status: "NO_EVENT_DAY" }
   | { status: "PAYMENT_REQUIRED"; name: string; day_label: string; options: PaymentOption[] }
@@ -150,7 +189,7 @@ export async function createWalkIn(opts: {
   eventId: string;
   staff: Staff;
   fields: AttendeeFields;
-  payment?: PaymentKind | null;
+  payment?: DoorChoice | null;
   overrideDayId?: string | null;
   now?: Date;
 }): Promise<WalkInResult> {
@@ -177,8 +216,10 @@ export async function createWalkIn(opts: {
   if (!access.ok) {
     const options = paymentOptions(day, event.membership_fee);
     if (!opts.payment) return { status: "PAYMENT_REQUIRED", name: fields.full_name, day_label: dayLabel(day), options };
-    option = options.find((o) => o.kind === opts.payment) ?? null;
-    if (!option) throw new HttpError(400, "PAYMENT_NOT_ALLOWED", "That payment isn't offered on this day.");
+    if (opts.payment !== "claim") {
+      option = options.find((o) => o.kind === opts.payment) ?? null;
+      if (!option) throw new HttpError(400, "PAYMENT_NOT_ALLOWED", "That payment isn't offered on this day.");
+    }
   }
 
   try {
@@ -202,6 +243,12 @@ export async function createWalkIn(opts: {
       // Takes a seat (DB trigger); a full day throws DAY_FULL and rolls back the new attendee too.
       const ci = await insertCheckin(c, { attendeeId: a.id, eventId, day, staff, method: "walk_in" });
       let isMember = !!access.memberId;
+      if (!access.ok && opts.payment === "claim") {
+        const memberId = await grantMembershipTx(c, { fullName: fields.full_name, email: fields.email, phone: fields.phone, staff, source: "claimed" });
+        await c.query("update attendees set member_id = $2 where id = $1", [a.id, memberId]);
+        await auditTx({ staffId: staff.id, action: "claim_member", eventId, attendeeId: a.id, details: { member_id: memberId, event_day_id: day.id } }, c);
+        isMember = true;
+      }
       if (option) {
         let memberId: string | null = null;
         if (option.kind === "membership") {
@@ -221,6 +268,7 @@ export async function createWalkIn(opts: {
         email_queued: !!fields.email,
         is_member: isMember,
         payment: option ? { kind: option.kind, amount: option.amount } : null,
+        ...(!access.ok && opts.payment === "claim" ? { claimed: true } : {}),
       };
     });
   } catch (err) {

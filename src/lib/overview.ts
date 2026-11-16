@@ -39,14 +39,17 @@ export async function getOverview(eventId: string) {
          from attendees where event_id = $1`,
       [eventId],
     ),
-    query<{ event_day_id: string; payments: number; cash: number }>(
-      `select event_day_id, count(*)::int as payments, coalesce(sum(amount), 0) as cash
-         from payments where event_id = $1 and voided_at is null group by event_day_id`,
+    query<{ event_day_id: string | null; channel: string; payments: number; cash: number }>(
+      `select event_day_id, channel, count(*)::int as payments, coalesce(sum(amount), 0) as cash
+         from payments where event_id = $1 and voided_at is null group by event_day_id, channel`,
       [eventId],
     ),
   ]);
+  const review = await query<{ n: number }>("select count(*)::int as n from members where needs_review");
   const by = new Map(perDay.rows.map((r) => [r.event_day_id, r]));
-  const cashBy = new Map(cash.rows.map((r) => [r.event_day_id, r]));
+  const cashBy = new Map(cash.rows.filter((r) => r.channel === "desk" && r.event_day_id).map((r) => [r.event_day_id!, r]));
+  const stand = cash.rows.filter((r) => r.channel === "stand").reduce((s, r) => s + Number(r.cash), 0);
+  const deskNoDay = cash.rows.filter((r) => r.channel === "desk" && !r.event_day_id).reduce((s, r) => s + Number(r.cash), 0);
   const today = tunisDate();
   const t = totals.rows[0];
   const dayRows: DayOverview[] = days.map((d) => ({
@@ -69,7 +72,9 @@ export async function getOverview(eventId: string) {
     from_form: t.registered - t.walk_ins,
     walk_ins: t.walk_ins,
     emails: { sent: t.sent, pending: t.pending, failed: t.failed, none: t.none },
-    cash_total: dayRows.reduce((s, d) => s + d.cash, 0),
+    cash_total: dayRows.reduce((s, d) => s + d.cash, 0) + deskNoDay,
+    stand_total: stand,
+    members_to_review: review.rows[0].n,
     days: dayRows,
   };
 }
@@ -86,16 +91,24 @@ export interface PersonRow {
   email_status: string;
   email_error: string | null;
   member_until: string | null;
+  member_source: string | null;
+  member_review: boolean | null;
+  enrollment: string | null;
+  enroll_sessions: boolean | null;
+  enroll_main: boolean | null;
   created_at: string;
   added_by: string | null;
   days: Record<string, { checked_at: string; by: string; method: string; paid?: { kind: string; amount: number; by: string } }>;
+  /** every payment, including the ones not tied to a day (stand, admin panel) */
+  payments: { kind: string; amount: number; channel: string; day_id: string | null; by: string }[];
 }
 
 export async function getPeople(eventId: string): Promise<PersonRow[]> {
   const [people, checkins, payments] = await Promise.all([
-    query<Omit<PersonRow, "days">>(
+    query<Omit<PersonRow, "days" | "payments">>(
       `select a.id, a.full_name, a.email, a.phone, a.class_year, a.team_name, a.source, a.short_code,
-              a.email_status, a.email_error, m.valid_until as member_until, a.created_at, s.name as added_by
+              a.email_status, a.email_error, m.valid_until as member_until, m.source as member_source, m.needs_review as member_review,
+              a.enrollment, a.enroll_sessions, a.enroll_main, a.created_at, s.name as added_by
          from attendees a
          left join members m on m.id = a.member_id and m.valid_until >= current_date
          left join staff s on s.id = a.added_by_staff_id
@@ -109,21 +122,22 @@ export async function getPeople(eventId: string): Promise<PersonRow[]> {
         where d.event_id = $1 and c.undone_at is null`,
       [eventId],
     ),
-    query<{ attendee_id: string; event_day_id: string; kind: string; amount: number; by: string }>(
-      `select p.attendee_id, p.event_day_id, p.kind, p.amount, s.name as by
+    query<{ attendee_id: string; event_day_id: string | null; kind: string; amount: number; by: string; channel: string }>(
+      `select p.attendee_id, p.event_day_id, p.kind, p.amount, s.name as by, p.channel
          from payments p join staff s on s.id = p.staff_id
         where p.event_id = $1 and p.voided_at is null`,
       [eventId],
     ),
   ]);
-  const map = new Map<string, PersonRow>(people.rows.map((p) => [p.id, { ...p, days: {} }]));
+  const map = new Map<string, PersonRow>(people.rows.map((p) => [p.id, { ...p, days: {}, payments: [] }]));
   for (const c of checkins.rows) {
     const p = map.get(c.attendee_id);
     if (p) p.days[c.event_day_id] = { checked_at: c.checked_at, by: c.by, method: c.method };
   }
   for (const pay of payments.rows) {
     const p = map.get(pay.attendee_id);
-    const d = p?.days[pay.event_day_id];
+    p?.payments.push({ kind: pay.kind, amount: Number(pay.amount), channel: pay.channel, day_id: pay.event_day_id, by: pay.by });
+    const d = pay.event_day_id ? p?.days[pay.event_day_id] : undefined;
     if (d) d.paid = { kind: pay.kind, amount: Number(pay.amount), by: pay.by };
   }
   return [...map.values()];

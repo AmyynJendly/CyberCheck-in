@@ -31,6 +31,8 @@ interface Overview {
   walk_ins: number;
   emails: { sent: number; pending: number; failed: number; none: number };
   cash_total: number;
+  stand_total: number;
+  members_to_review: number;
   days: DayRow[];
 }
 
@@ -109,6 +111,14 @@ export default function AdminOverview() {
       />
       {error && <Notice tone="error">{error}</Notice>}
       {!data && !error && <Spinner />}
+      {data && data.members_to_review > 0 && (
+        <div className="mb-6">
+          <Notice tone="warn">
+            {data.members_to_review} {data.members_to_review === 1 ? "person was" : "people were"} let in as “already a member” without being on the list.{" "}
+            <Link href="/admin/members">Check them in Members.</Link>
+          </Notice>
+        </div>
+      )}
       {data && (
         <div className="space-y-8">
           <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -121,7 +131,11 @@ export default function AdminOverview() {
               {t && <Meter value={t.checked_in} max={t.capacity} />}
             </Tile>
             <Tile label="Registered" value={String(data.registered)} sub={`${data.from_form} form · ${data.walk_ins} walk-in`} />
-            <Tile label="Cash today" value={fmtDT(t?.cash ?? 0)} sub={`${fmtDT(data.cash_total)} all days`} />
+            <Tile
+              label="Door cash today"
+              value={fmtDT(t?.cash ?? 0)}
+              sub={`${fmtDT(data.cash_total)} all days${data.stand_total ? ` · ${fmtDT(data.stand_total)} at the stand` : ""}`}
+            />
             <Tile
               label="QR emails"
               value={String(data.emails.sent)}

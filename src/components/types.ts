@@ -37,6 +37,8 @@ export function dayName(d: Pick<DayInfo, "label" | "day_date">): string {
 }
 
 export type PaymentKind = "membership" | "entry";
+/** A payment, or "already a member, not on the list" (no money; an admin reviews it). */
+export type DoorChoice = PaymentKind | "claim";
 export interface PaymentOption {
   kind: PaymentKind;
   amount: number;

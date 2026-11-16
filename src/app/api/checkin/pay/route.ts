@@ -1,4 +1,5 @@
-// POST /api/checkin/pay  { event_id, attendee_id, kind: "membership" | "entry", method?: "qr" | "manual", event_day_id? }
+// POST /api/checkin/pay  { event_id, attendee_id, kind: "membership" | "entry" | "claim", method?: "qr" | "manual", event_day_id? }
+// "claim" = "already a member, not on the list": admitted as a member without payment, flagged for admin review.
 // After PAYMENT_REQUIRED: the staff member took the cash. Payment + check-in in one transaction.
 import { HttpError, json, readJson, route } from "@/lib/http";
 import { requireStaff } from "@/lib/auth";
@@ -11,7 +12,9 @@ export const runtime = "nodejs";
 export const POST = route(async (req) => {
   const staff = await requireStaff(req);
   const body = await readJson(req);
-  if (body.kind !== "membership" && body.kind !== "entry") throw new HttpError(400, "BAD_REQUEST", "kind must be membership or entry.");
+  if (body.kind !== "membership" && body.kind !== "entry" && body.kind !== "claim") {
+    throw new HttpError(400, "BAD_REQUEST", "kind must be membership, entry or claim.");
+  }
   const result = await payAndCheckIn({
     staff,
     eventId: requireUuid(body.event_id, "event_id"),

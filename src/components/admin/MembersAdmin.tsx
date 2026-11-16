@@ -10,7 +10,7 @@ interface Member {
   email: string | null;
   phone: string | null;
   valid_until: string;
-  source: "import" | "desk" | "manual";
+  source: "import" | "desk" | "manual" | "claimed" | "stand";
 }
 interface ListResponse {
   members: Member[];
@@ -23,7 +23,7 @@ interface Preview {
   skipped: number;
 }
 
-const SOURCE = { import: "Imported", desk: "Joined at the desk", manual: "Added by hand" } as const;
+const SOURCE = { import: "Imported", desk: "Joined at the door", manual: "Added by hand", claimed: "Said “already a member”", stand: "Paid at the stand" } as const;
 
 export function MembersAdmin() {
   const [q, setQ] = useState("");

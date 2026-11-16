@@ -8,7 +8,7 @@ import { api, errorMessage } from "@/components/api";
 import { DayPicker } from "@/components/DayPicker";
 import { Button, FieldRow, NeedEvent, Notice, Page, Section, Sheet, TextField } from "@/components/ui";
 import { MemberBadge, PaymentChoices } from "@/components/Payment";
-import { accessLabel, fmtDT, type PaymentKind, type PaymentOption } from "@/components/types";
+import { accessLabel, fmtDT, type DoorChoice, type PaymentKind, type PaymentOption } from "@/components/types";
 
 type WalkInResult =
   | {
@@ -19,6 +19,7 @@ type WalkInResult =
       email_queued: boolean;
       is_member: boolean;
       payment: { kind: PaymentKind; amount: number } | null;
+      claimed?: boolean;
     }
   | { status: "NO_EVENT_DAY" }
   | { status: "PAYMENT_REQUIRED"; name: string; day_label: string; options: PaymentOption[] }
@@ -40,7 +41,7 @@ export default function WalkInPage() {
 
   const set = (k: keyof typeof EMPTY) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const send = async (payment: PaymentKind | null) => {
+  const send = async (payment: DoorChoice | null) => {
     if (!event || busy) return;
     setBusy(true);
     setError(null);
@@ -95,6 +96,7 @@ export default function WalkInPage() {
                 <p className="t-subhead text-label2">
                   Added and checked in for {result.day_label}.
                   {result.payment && ` Paid ${fmtDT(result.payment.amount)}${result.payment.kind === "membership" ? ", now a club member" : " (entry only)"}.`}
+                  {result.claimed && " Added as a member; an admin will check the member list."}
                 </p>
                 <p className="t-subhead mt-2 text-label2">
                   Backup code <span className="ml-1 font-mono text-[17px] font-semibold tracking-[0.14em] text-label">{result.short_code}</span>

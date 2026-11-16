@@ -1,7 +1,7 @@
 "use client";
 
-import { Banknote, CircleX } from "lucide-react";
-import { fmtDT, type PaymentKind, type PaymentOption } from "./types";
+import { Banknote, CircleX, IdCard } from "lucide-react";
+import { fmtDT, type DoorChoice, type PaymentKind, type PaymentOption } from "./types";
 
 const DETAIL: Record<PaymentKind, string> = {
   membership: "Becomes a club member: free for every day this year",
@@ -20,7 +20,7 @@ export function PaymentChoices({
   onDark,
 }: {
   options: PaymentOption[];
-  onPay: (kind: PaymentKind) => void;
+  onPay: (kind: DoorChoice) => void;
   onCancel: () => void;
   busy?: boolean;
   onDark?: boolean;
@@ -47,6 +47,18 @@ export function PaymentChoices({
           </span>
         </button>
       ))}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => onPay("claim")}
+        className={`flex w-full items-center gap-3 rounded-[14px] px-4 py-3 text-left transition disabled:opacity-40 ${onDark ? "border border-white/35 text-white active:bg-white/10" : "border border-sep text-label active:bg-fill"}`}
+      >
+        <IdCard className="h-6 w-6 shrink-0" strokeWidth={2} aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span className="block t-headline">Already a member · not on the list</span>
+          <span className={`block t-footnote ${onDark ? "opacity-75" : "text-label2"}`}>No money taken. Saved under your name; an admin checks it.</span>
+        </span>
+      </button>
       <button
         type="button"
         disabled={busy}

@@ -13,7 +13,9 @@ export const POST = route(async (req) => {
   const staff = await requireStaff(req);
   const body = await readJson(req);
   const payment = body.payment ?? null;
-  if (payment !== null && payment !== "membership" && payment !== "entry") throw new HttpError(400, "BAD_REQUEST", "payment must be membership or entry.");
+  if (payment !== null && payment !== "membership" && payment !== "entry" && payment !== "claim") {
+    throw new HttpError(400, "BAD_REQUEST", "payment must be membership, entry or claim.");
+  }
   const result = await createWalkIn({
     payment,
     staff,

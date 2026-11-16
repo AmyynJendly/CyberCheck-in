@@ -8,6 +8,9 @@
  *   API_URL      https://<your-app>.vercel.app/api/form-submit
  *   EVENT_SLUG   e.g. mini-ctf-2026   (Admin page shows it)
  *   FORM_SECRET  the event's secret   (Admin page → Show / Copy)
+ *   ENROLLMENT_QUESTION  (optional) exact title of the "what do you enroll in"
+ *                        checkbox question. If not set, the first checkbox
+ *                        question in the form is used.
  *
  * Functions you run by hand from the editor:
  *   setup()           install the triggers (run once; safe to re-run)
@@ -193,11 +196,17 @@ function checkConfig_() {
 
 function buildPayload_(response, slug) {
   var answers = {};
+  var enrollment = '';
+  var enrollTitle = String(PropertiesService.getScriptProperties().getProperty('ENROLLMENT_QUESTION') || '').trim().toLowerCase();
   response.getItemResponses().forEach(function (ir) {
-    var title = String(ir.getItem().getTitle() || '').trim().toLowerCase();
+    var item = ir.getItem();
+    var title = String(item.getTitle() || '').trim().toLowerCase();
     var value = ir.getResponse();
     if (Array.isArray(value)) value = value.join(', ');
-    answers[title] = value == null ? '' : String(value).trim();
+    value = value == null ? '' : String(value).trim();
+    answers[title] = value;
+    var isEnroll = enrollTitle ? title === enrollTitle : item.getType() === FormApp.ItemType.CHECKBOX;
+    if (isEnroll && !enrollment) enrollment = value;
   });
   var get = function (key) { return answers[QUESTIONS[key].toLowerCase()] || ''; };
 
@@ -212,7 +221,8 @@ function buildPayload_(response, slug) {
     email: email,
     phone: get('phone'),
     class_year: get('class_year'),
-    team_name: get('team_name')
+    team_name: get('team_name'),
+    enrollment: enrollment
   };
 }
 

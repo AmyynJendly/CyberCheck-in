@@ -1,18 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Download } from "lucide-react";
+import { Check, Download, FileUp } from "lucide-react";
 import { useApp } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
 import { AdminTitle } from "@/components/admin/AdminShell";
 import { MemberBadge } from "@/components/Payment";
-import { NeedEvent, Notice, SearchField, Segmented, Spinner, btn, fmtTime } from "@/components/ui";
+import { Button, NeedEvent, Notice, SearchField, Segmented, Sheet, SheetAction, Spinner, btn, fmtTime } from "@/components/ui";
+import { StandImport } from "@/components/admin/StandImport";
+import { errorMessage as errMsg } from "@/components/api";
 import { fmtDT } from "@/components/types";
 
 interface Day {
   id: string;
   day_date: string;
   label: string | null;
+  access: "free" | "members" | "members_or_fee";
+  entry_fee: number;
 }
 interface Person {
   id: string;
@@ -24,8 +28,14 @@ interface Person {
   email_status: string;
   email_error: string | null;
   member_until: string | null;
+  member_source: string | null;
+  member_review: boolean | null;
+  enrollment: string | null;
+  enroll_sessions: boolean | null;
+  enroll_main: boolean | null;
   added_by: string | null;
   days: Record<string, { checked_at: string; by: string; method: string; paid?: { kind: string; amount: number; by: string } }>;
+  payments: { kind: string; amount: number; channel: string; day_id: string | null; by: string }[];
 }
 
 type Filter = "all" | "in" | "out" | "walk_in" | "members";
@@ -38,6 +48,28 @@ export default function AdminPeople() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [importing, setImporting] = useState(false);
+  const [selected, setSelected] = useState<Person | null>(null);
+  const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+
+  const record = async (p: Person, kind: "membership" | "entry" | "member") => {
+    setSelected(null);
+    try {
+      await api(`/api/admin/attendees/${p.id}/payment`, { body: { kind } });
+      setNotice({
+        tone: "ok",
+        text:
+          kind === "membership"
+            ? `${p.full_name} paid ${fmtDT(event?.membership_fee ?? 15)} and is now a member.`
+            : kind === "entry"
+              ? `${p.full_name}'s main-event entry is marked as paid.`
+              : `${p.full_name} is marked as a member (no payment).`,
+      });
+      await load();
+    } catch (e) {
+      setNotice({ tone: "error", text: errMsg(e) });
+    }
+  };
 
   const load = useCallback(async () => {
     if (!event) return;
@@ -87,11 +119,26 @@ export default function AdminPeople() {
         title="People"
         subtitle={data ? `${rows.length} of ${data.people.length} shown` : undefined}
         actions={
-          <a className={btn("gray")} href={`/api/events/${event.id}/export.csv`}>
-            <Download className="h-4 w-4" aria-hidden /> Full CSV
-          </a>
+          <>
+            <Button variant={importing ? "tinted" : "gray"} onClick={() => setImporting((v) => !v)}>
+              <FileUp className="h-4 w-4" aria-hidden /> Import sheet
+            </Button>
+            <a className={btn("gray")} href={`/api/events/${event.id}/export.csv`}>
+              <Download className="h-4 w-4" aria-hidden /> Full CSV
+            </a>
+          </>
         }
       />
+      {importing && (
+        <div className="mb-8 max-w-3xl">
+          <StandImport eventId={event.id} onDone={load} />
+        </div>
+      )}
+      {notice && (
+        <div className="mb-4">
+          <Notice tone={notice.tone}>{notice.text}</Notice>
+        </div>
+      )}
       <div className="mb-4 space-y-3">
         <SearchField value={q} onChange={setQ} placeholder="Name, email, phone or code" />
         <div className="max-w-xl">
@@ -117,6 +164,8 @@ export default function AdminPeople() {
               <tr className="border-b border-sep/60">
                 <th className="px-4 py-2.5 font-medium">Name</th>
                 <th className="px-3 py-2.5 font-medium">Contact</th>
+                <th className="px-3 py-2.5 font-medium">Enrolled</th>
+                <th className="px-3 py-2.5 font-medium">Paid</th>
                 <th className="px-3 py-2.5 font-medium">QR email</th>
                 {data.days.map((d) => (
                   <th key={d.id} className={`px-2 py-2.5 text-center font-medium ${d.id === todayId ? "text-accent" : ""}`} title={d.day_date}>
@@ -127,10 +176,11 @@ export default function AdminPeople() {
             </thead>
             <tbody className="t-subhead">
               {rows.map((p) => (
-                <tr key={p.id} className="border-b border-sep/40 last:border-0">
+                <tr key={p.id} onClick={() => setSelected(p)} className="cursor-pointer border-b border-sep/40 last:border-0 hover:bg-fill/40">
                   <td className="px-4 py-2.5">
                     <p className="font-semibold">
                       {p.full_name} {p.member_until && <MemberBadge small />}
+                      {p.member_review && <span className="ml-1 rounded-full bg-sys-orange/15 px-2 py-0.5 t-caption font-semibold text-sys-orange">to check</span>}
                     </p>
                     <p className="t-footnote text-label2">
                       <span className="font-mono tracking-wider">{p.short_code}</span>
@@ -140,6 +190,18 @@ export default function AdminPeople() {
                   <td className="max-w-[240px] px-3 py-2.5">
                     <p className="truncate">{p.email ?? <span className="text-label3">no email</span>}</p>
                     <p className="t-footnote text-label2">{p.phone}</p>
+                  </td>
+                  <td className="px-3 py-2.5 t-footnote text-label2" title={p.enrollment ?? undefined}>
+                    {[p.enroll_sessions && "Sessions", p.enroll_main && "Main"].filter(Boolean).join(" + ") || (p.enrollment ? "?" : "—")}
+                  </td>
+                  <td className="px-3 py-2.5 t-footnote">
+                    {p.payments.length
+                      ? p.payments.map((x, i) => (
+                          <span key={i} className="block whitespace-nowrap">
+                            {fmtDT(x.amount)} <span className="text-label2">{x.kind === "membership" ? "member" : "entry"}{x.channel === "stand" ? " · stand" : ""}</span>
+                          </span>
+                        ))
+                      : <span className="text-label3">—</span>}
                   </td>
                   <td className={`px-3 py-2.5 t-footnote font-semibold capitalize ${EMAIL_TONE[p.email_status] ?? ""}`} title={p.email_error ?? undefined}>
                     {p.email_status === "none" ? "—" : p.email_status === "pending" ? "waiting" : p.email_status}
@@ -167,7 +229,7 @@ export default function AdminPeople() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={3 + data.days.length} className="px-4 py-8 text-center text-label2">
+                  <td colSpan={5 + data.days.length} className="px-4 py-8 text-center text-label2">
                     Nobody matches.
                   </td>
                 </tr>
@@ -175,6 +237,31 @@ export default function AdminPeople() {
             </tbody>
           </table>
         </div>
+      )}
+      {selected && data && (
+        <Sheet
+          open
+          onClose={() => setSelected(null)}
+          title={selected.full_name}
+          message={
+            selected.member_until
+              ? `Member until ${selected.member_until}${selected.member_review ? " (claimed at the door, to check in Members)" : ""}.`
+              : "Not a member. Record a payment taken outside the door (for example during the free session)."
+          }
+        >
+          {!selected.member_until && (
+            <>
+              <SheetAction onClick={() => record(selected, "membership")}>Paid {fmtDT(event.membership_fee)} · Join the club</SheetAction>
+              {data.days.some((d) => d.access === "members_or_fee") &&
+                !selected.payments.some((x) => x.kind === "entry") && (
+                  <SheetAction onClick={() => record(selected, "entry")}>
+                    Paid {fmtDT(data.days.find((d) => d.access === "members_or_fee")!.entry_fee)} · {data.days.find((d) => d.access === "members_or_fee")!.label} entry
+                  </SheetAction>
+                )}
+              <SheetAction onClick={() => record(selected, "member")}>Is a member · no payment</SheetAction>
+            </>
+          )}
+        </Sheet>
       )}
     </>
   );

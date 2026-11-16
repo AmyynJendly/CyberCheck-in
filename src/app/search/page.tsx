@@ -7,7 +7,7 @@ import { useApp, useDayParam } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
 import { Button, NeedEvent, Notice, Page, Row as ListRow, SearchField, Section, Sheet, Spinner, TextField, fmtTime } from "@/components/ui";
 import { MemberBadge, PaymentChoices } from "@/components/Payment";
-import { fmtDT, type PaymentKind, type PaymentOption } from "@/components/types";
+import { fmtDT, type DoorChoice, type PaymentKind, type PaymentOption } from "@/components/types";
 
 interface Row {
   id: string;
@@ -117,11 +117,11 @@ function SearchInner() {
     }
   };
 
-  const pay = async (row: Row, kind: PaymentKind) => {
+  const pay = async (row: Row, kind: DoorChoice) => {
     if (!event) return;
     setBusyId(row.id);
     try {
-      const r = await api<{ status: string; day_label?: string; payment?: { kind: PaymentKind; amount: number } | null; checked_at?: string; by_staff_name?: string }>(
+      const r = await api<{ status: string; day_label?: string; payment?: { kind: PaymentKind; amount: number } | null; claimed?: boolean; checked_at?: string; by_staff_name?: string }>(
         "/api/checkin/pay",
         { body: { attendee_id: row.id, event_id: event.id, kind, method: "manual", ...dayParam } },
       );
@@ -129,7 +129,11 @@ function SearchInner() {
       if (r.status === "OK")
         setMsg(row.id, {
           tone: "ok",
-          text: r.payment ? `Paid ${fmtDT(r.payment.amount)}${r.payment.kind === "membership" ? ", now a member" : ""}. Checked in.` : `Checked in for ${r.day_label}.`,
+          text: r.payment
+            ? `Paid ${fmtDT(r.payment.amount)}${r.payment.kind === "membership" ? ", now a member" : ""}. Checked in.`
+            : r.claimed
+              ? "Checked in as a member. An admin will check the member list."
+              : `Checked in for ${r.day_label}.`,
         });
       else if (r.status === "ALREADY_CHECKED_IN") setMsg(row.id, { tone: "warn", text: `Already checked in at ${fmtTime(r.checked_at)} by ${r.by_staff_name}. No payment recorded.` });
       else if (r.status === "FULL") setMsg(row.id, { tone: "error", text: "Session full: no seats left. Nothing was charged." });

@@ -28,9 +28,10 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
     email_status: string;
     created_at: string;
     member_until: string | null;
+    enrollment: string | null;
   }>(
     `select a.id, a.full_name, a.email, a.phone, a.class_year, a.team_name, a.source,
-            s.name as added_by, a.short_code, a.email_status, a.created_at, m.valid_until as member_until
+            s.name as added_by, a.short_code, a.email_status, a.created_at, m.valid_until as member_until, a.enrollment
        from attendees a
        left join staff s on s.id = a.added_by_staff_id
        left join members m on m.id = a.member_id
@@ -48,14 +49,18 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
   );
   const map = new Map<string, (typeof checkins.rows)[number]>();
   for (const c of checkins.rows) map.set(`${c.attendee_id}|${c.event_day_id}`, c);
-  const payments = await query<{ attendee_id: string; event_day_id: string; kind: string; amount: number; paid_to: string }>(
-    `select p.attendee_id, p.event_day_id, p.kind, p.amount, s.name as paid_to
+  const payments = await query<{ attendee_id: string; event_day_id: string | null; kind: string; amount: number; paid_to: string; channel: string }>(
+    `select p.attendee_id, p.event_day_id, p.kind, p.amount, s.name as paid_to, p.channel
        from payments p join staff s on s.id = p.staff_id
       where p.event_id = $1 and p.voided_at is null`,
     [eventId],
   );
   const paid = new Map<string, (typeof payments.rows)[number]>();
-  for (const p of payments.rows) paid.set(`${p.attendee_id}|${p.event_day_id}`, p);
+  const paidOther = new Map<string, string[]>(); // payments not tied to a day (stand membership, admin panel)
+  for (const p of payments.rows) {
+    if (p.event_day_id) paid.set(`${p.attendee_id}|${p.event_day_id}`, p);
+    else paidOther.set(p.attendee_id, [...(paidOther.get(p.attendee_id) ?? []), `${p.kind} ${p.amount} DT${p.channel === "stand" ? " at the stand" : ` (${p.paid_to})`}`]);
+  }
   const hasPaidDays = days.some((d) => d.access !== "free") || payments.rows.length > 0;
 
   const header = [
@@ -69,7 +74,7 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
     "short_code",
     "email_status",
     "registered_at",
-    ...(hasPaidDays ? ["member_until"] : []),
+    ...(hasPaidDays ? ["member_until", "enrollment", "paid_before"] : []),
     ...days.flatMap((d) => {
       const l = `${dayLabel(d)} (${d.day_date})`;
       return [
@@ -94,13 +99,13 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
         a.short_code,
         a.email_status,
         tunisDateTime(a.created_at),
-        ...(hasPaidDays ? [a.member_until ?? ""] : []),
+        ...(hasPaidDays ? [a.member_until ?? "", a.enrollment ?? "", (paidOther.get(a.id) ?? []).join("; ")] : []),
         ...days.flatMap((d) => {
           const c = map.get(`${a.id}|${d.id}`);
           const p = paid.get(`${a.id}|${d.id}`);
           return [
             ...(c ? [tunisDateTime(c.checked_at), c.checked_by, c.method] : ["", "", ""]),
-            ...(hasPaidDays ? (p ? [`${p.kind} ${p.amount} DT`, p.paid_to] : ["", ""]) : []),
+            ...(hasPaidDays ? (p ? [`${p.kind} ${p.amount} DT${p.channel === "stand" ? " (stand)" : ""}`, p.paid_to] : ["", ""]) : []),
           ];
         }),
       ]),
@@ -129,10 +134,11 @@ export async function buildDayCsv(eventId: string, dayId: string): Promise<{ csv
     paid_kind: string | null;
     paid_amount: number | null;
     paid_to: string | null;
+    paid_channel: string | null;
   }>(
     `select a.full_name, a.email, a.phone, a.class_year, a.team_name, a.source, m.valid_until as member_until,
             c.checked_at, s.name as checked_by, c.method,
-            p.kind as paid_kind, p.amount as paid_amount, ps.name as paid_to
+            p.kind as paid_kind, p.amount as paid_amount, ps.name as paid_to, p.channel as paid_channel
        from checkins c
        join attendees a on a.id = c.attendee_id
        join staff s on s.id = c.staff_id
@@ -157,7 +163,7 @@ export async function buildDayCsv(eventId: string, dayId: string): Promise<{ csv
         tunisDateTime(x.checked_at),
         x.checked_by,
         x.method,
-        x.paid_kind ? `${x.paid_kind} ${x.paid_amount} DT` : "",
+        x.paid_kind ? `${x.paid_kind} ${x.paid_amount} DT${x.paid_channel === "stand" ? " (stand)" : ""}` : "",
         x.paid_to ?? "",
       ]),
     ),

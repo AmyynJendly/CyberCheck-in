@@ -194,84 +194,11 @@ function TemplateEditor({ eventId }: { eventId: string }) {
   );
 }
 
-function ImportRegistrations({ eventId }: { eventId: string }) {
-  const [text, setText] = useState("");
-  const [preview, setPreview] = useState<{ preview: { full_name: string; email: string | null; phone: string | null }[]; count: number; skipped: number } | null>(null);
-  const [msg, setMsg] = useState<Msg>(null);
-  const [busy, setBusy] = useState(false);
-
-  const call = async (dry: boolean) => {
-    setBusy(true);
-    setMsg(null);
-    try {
-      if (dry) {
-        const r = await api<NonNullable<typeof preview>>(`/api/admin/events/${eventId}/import`, { body: { text, dry_run: true } });
-        setPreview(r);
-        setMsg({ tone: "ok", text: `Found ${r.count} people. Check the first rows, then import.` });
-      } else {
-        const r = await api<{ created: number; updated: number; unchanged: number; emails_queued: number }>(`/api/admin/events/${eventId}/import`, {
-          body: { text },
-          timeoutMs: 60_000,
-        });
-        setText("");
-        setPreview(null);
-        setMsg({
-          tone: "ok",
-          text: `${r.created} added, ${r.updated} updated, ${r.unchanged} already there. ${r.emails_queued} QR email${r.emails_queued === 1 ? "" : "s"} queued; they go out one by one.`,
-        });
-      }
-    } catch (e) {
-      setMsg({ tone: "error", text: errorMessage(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="max-w-2xl space-y-4">
-      <Section
-        header="Add registrations by pasting"
-        footer="Use this if people registered somewhere other than the connected Google Form, for example the form's response sheet. Copy the rows with the header (name, email, phone) and paste. Everyone with an email gets their QR. Pasting the same list again doesn't duplicate anyone or resend emails."
-      >
-        <div className="px-4 py-3">
-          <textarea
-            aria-label="Pasted registrations"
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              setPreview(null);
-            }}
-            rows={5}
-            placeholder={"Full name\tEmail\tPhone\nYasmine Gharbi\tyasmine@example.com\t50 000 000"}
-            className="w-full resize-y rounded-[10px] bg-fill px-3 py-2 font-mono text-[13px] leading-5 text-label placeholder:text-label3 outline-none"
-          />
-        </div>
-      </Section>
-      {preview && preview.preview.length > 0 && (
-        <Section header={`Preview · first ${preview.preview.length} of ${preview.count}`}>
-          {preview.preview.map((p, i) => (
-            <Row key={i} title={p.full_name} subtitle={[p.email ?? "no email (no QR email)", p.phone ?? "no phone"].join(" · ")} />
-          ))}
-        </Section>
-      )}
-      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
-      <div className="grid grid-cols-2 gap-2.5">
-        <Button variant="gray" size="large" disabled={busy || !text.trim()} onClick={() => call(true)}>
-          Preview
-        </Button>
-        <Button size="large" disabled={busy || !preview?.count} onClick={() => call(false)}>
-          Import {preview?.count ?? ""} & Email
-        </Button>
-      </div>
-    </section>
-  );
-}
-
 export default function AdminEmailsPage() {
   const { event } = useApp();
   return (
     <>
-      <AdminTitle title="Emails" subtitle="The QR email everyone receives, the sending queue, and pasting registrations." />
+      <AdminTitle title="Emails" subtitle="The QR email everyone receives, and the sending queue." />
       {!event ? (
         <NeedEvent />
       ) : (
@@ -281,7 +208,9 @@ export default function AdminEmailsPage() {
             <h2 className="t-title3 mb-3">Sending</h2>
             <EmailsAdmin />
           </section>
-          <ImportRegistrations eventId={event.id} />
+          <p className="t-footnote max-w-2xl px-1 text-label2">
+            To add registrations from a sheet (for example the registration stand&apos;s), use People → Import sheet. Everyone new gets their QR email from here.
+          </p>
         </div>
       )}
     </>

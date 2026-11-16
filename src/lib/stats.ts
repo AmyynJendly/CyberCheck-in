@@ -38,7 +38,7 @@ export async function getEventStats(eventId: string, opts: { dayId?: string | nu
     getEventDays(eventId),
     query<{ total: number }>(
       `select coalesce(sum(p.amount), 0) as total from payments p join event_days d on d.id = p.event_day_id
-        where p.event_id = $1 and p.staff_id = $2 and p.voided_at is null
+        where p.event_id = $1 and p.staff_id = $2 and p.voided_at is null and p.channel = 'desk'
           and (($3::uuid is not null and p.event_day_id = $3) or ($3::uuid is null and d.day_date = $4::date))`,
       [eventId, opts.staffId ?? null, opts.dayId ?? null, tunisDate(opts.now)],
     ),

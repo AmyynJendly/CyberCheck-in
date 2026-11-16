@@ -28,6 +28,8 @@ import type { Staff } from "./auth";
 
 export type CheckinMethod = "qr" | "manual" | "walk_in";
 export type PaymentKind = "membership" | "entry";
+/** What HR can choose on a "payment needed" screen: a payment, or "already a member, not on the list" (no money; admin reviews it). */
+export type DoorChoice = PaymentKind | "claim";
 
 export interface PaymentOption {
   kind: PaymentKind;
@@ -47,6 +49,8 @@ export type ScanResult =
       checked_at: string;
       is_member: boolean;
       payment: { kind: PaymentKind; amount: number } | null;
+      /** Admitted as "already a member" without paying; waiting for admin review. */
+      claimed?: boolean;
     }
   | {
       status: "ALREADY_CHECKED_IN";
@@ -248,6 +252,7 @@ async function reject(staff: Staff, eventId: string, reason: string, extra: Reco
 async function commit(
   ctx: { attendee: AttendeeLite; day: ContextDay; staff: Staff; method: CheckinMethod; memberId: string | null },
   paid: PaymentOption | null,
+  claim = false,
 ): Promise<ScanResult> {
   const { attendee, day, staff, method } = ctx;
   const ok = (row: { id: string; checked_at: string }, isMember: boolean): ScanResult => ({
@@ -261,10 +266,11 @@ async function commit(
     checked_at: row.checked_at,
     is_member: isMember,
     payment: paid ? { kind: paid.kind, amount: paid.amount } : null,
+    ...(claim ? { claimed: true } : {}),
   });
 
   try {
-    if (!paid) {
+    if (!paid && !claim) {
       // Fast path: one atomic statement, no explicit transaction.
       const row = await insertCheckin(undefined, { attendeeId: attendee.id, eventId: attendee.event_id, day, staff, method, linkMemberId: ctx.memberId });
       return ok(row, !!ctx.memberId);
@@ -274,6 +280,12 @@ async function commit(
       // before it can touch members or payments.
       const row = await insertCheckin(c, { attendeeId: attendee.id, eventId: attendee.event_id, day, staff, method, linkMemberId: ctx.memberId });
       let isMember = !!ctx.memberId;
+      if (claim) {
+        const memberId = await grantMembershipTx(c, { fullName: attendee.full_name, email: attendee.email, phone: attendee.phone, staff, source: "claimed" });
+        await c.query("update attendees set member_id = $2, updated_at = now() where id = $1", [attendee.id, memberId]);
+        await audit({ staffId: staff.id, action: "claim_member", eventId: attendee.event_id, attendeeId: attendee.id, details: { member_id: memberId, event_day_id: day.id } }, c);
+        isMember = true;
+      }
       if (paid) {
         let memberId: string | null = null;
         if (paid.kind === "membership") {
@@ -311,7 +323,7 @@ async function admit(
   opts: CheckinOptions,
   who: { token?: string; attendeeId?: string },
   method: CheckinMethod,
-  pay: PaymentKind | null,
+  pay: DoorChoice | null,
 ): Promise<ScanResult> {
   const override = opts.overrideDayId && opts.staff.role === "admin" ? opts.overrideDayId : null;
   const ctx = await loadContext(opts.eventId, who, override, tunisDate(opts.now));
@@ -361,6 +373,7 @@ async function admit(
       options,
     };
   }
+  if (pay === "claim") return commit(base, null, true);
   const option = options.find((o) => o.kind === pay);
   if (!option) throw new HttpError(400, "PAYMENT_NOT_ALLOWED", "That payment isn't offered on this day.");
   return commit(base, option);
@@ -383,7 +396,7 @@ export async function checkInAttendee(opts: CheckinOptions & { attendeeId: strin
 
 /** After PAYMENT_REQUIRED: the staff member took the cash. Records payment + check-in atomically. */
 export async function payAndCheckIn(
-  opts: CheckinOptions & { attendeeId: string; kind: PaymentKind; method: "qr" | "manual" },
+  opts: CheckinOptions & { attendeeId: string; kind: DoorChoice; method: "qr" | "manual" },
 ): Promise<ScanResult> {
   return admit(opts, { attendeeId: opts.attendeeId }, opts.method, opts.kind);
 }

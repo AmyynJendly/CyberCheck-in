@@ -36,7 +36,11 @@ export type AuditAction =
   | "delete_member"
   | "link_member"
   | "import_attendees"
-  | "update_email_template";
+  | "update_email_template"
+  | "claim_member"
+  | "confirm_member"
+  | "reject_member"
+  | "import_stand_sheet";
 
 export interface AuditEntry {
   staffId?: string | null;

@@ -10,7 +10,7 @@ import { DayPicker } from "@/components/DayPicker";
 import { NeedEvent, Notice, OfflineBanner, Spinner, btn, fmtTime } from "@/components/ui";
 import { parseScannedText } from "@/lib/qr-format";
 import { PaymentChoices } from "@/components/Payment";
-import { accessLabel, fmtDT, type PaymentKind, type PaymentOption } from "@/components/types";
+import { accessLabel, fmtDT, type DoorChoice, type PaymentKind, type PaymentOption } from "@/components/types";
 
 type Result =
   | {
@@ -21,6 +21,7 @@ type Result =
       day_label: string;
       is_member?: boolean;
       payment?: { kind: PaymentKind; amount: number } | null;
+      claimed?: boolean;
     }
   | {
       status: "PAYMENT_REQUIRED";
@@ -60,7 +61,7 @@ function vibrate(pattern: number | number[]) {
 function summarize(r: Result): Omit<RecentScan, "id" | "at"> {
   switch (r.status) {
     case "OK":
-      return { tone: "ok", title: r.name, detail: r.payment ? `Paid ${fmtDT(r.payment.amount)}` : r.is_member ? "Member" : "Checked in" };
+      return { tone: "ok", title: r.name, detail: r.payment ? `Paid ${fmtDT(r.payment.amount)}` : r.claimed ? "Member (to check)" : r.is_member ? "Member" : "Checked in" };
     case "PAYMENT_REQUIRED":
       return { tone: "bad", title: r.name, detail: "Not paid" };
     case "ALREADY_CHECKED_IN":
@@ -149,7 +150,7 @@ export default function ScanPage() {
     [show, reload],
   );
   const pay = useCallback(
-    async (attendeeId: string, kind: PaymentKind) => {
+    async (attendeeId: string, kind: DoorChoice) => {
       const { eventId, dayParam } = ctx.current;
       setPaying(true);
       try {
@@ -413,7 +414,9 @@ function ResultOverlay({ result, onClose }: { result: Result; onClose: () => voi
         [result.team_name, result.class_year].filter(Boolean).join(" · "),
         result.payment
           ? `Paid ${fmtDT(result.payment.amount)} · ${result.payment.kind === "membership" ? "now a member" : "entry only"}`
-          : result.is_member
+          : result.claimed
+            ? "Member · an admin will check the list"
+            : result.is_member
             ? `Member · ${result.day_label}`
             : result.day_label,
       ];
