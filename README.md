@@ -73,7 +73,7 @@ curl -X POST http://localhost:3000/api/form-submit \
 
 ```bash
 docker compose up -d db
-npm test            # 81 tests, against the cybertrace_test database (recreated on each run)
+npm test            # 83 tests, against the cybertrace_test database (recreated on each run)
 npm run typecheck
 npm run build
 ```
@@ -206,6 +206,7 @@ Example, the bootcamp: Session 1 *Free for everyone*; Sessions 2–4 *Members on
 - **Sending:** every registration is queued and sent by one sender at a time over a single Gmail connection (Gmail blocks bursts). Temporary Gmail errors leave the email *waiting* and it's retried automatically (after each registration, and every 5 minutes by the form's script); after 5 failed tries it's marked *failed*. Admin → Emails shows both, with *Send Waiting Now* and *Retry Failed*.
 - **Paste registrations:** Admin → Emails → *Add registrations by pasting* (name, email, phone with a header row, e.g. from the Google Form's response sheet). Everyone with an email gets their QR. Pasting the same list again changes nothing.
 - **CSV per session:** Admin → Overview → *CSV* on each day's row: the people checked in that day, with time, staff member and payment. *Full CSV* has everyone and every day. CSV and the backup list are admin-only.
+- **Attended but not ticked:** when the form has a checkbox of sessions and a day's label is the start of one of its options (day "Offensive Web 101" ↔ option "Offensive Web 101(from interception to exploitation)"), the CSVs compare attendance with the ticks. The full CSV gets a `ticked` column per such day (`yes`, or `NOT TICKED` if they came without ticking it) and an `attended_not_ticked` column listing those days; the day CSV gets a `ticked` column. People with no form answer (walk-ins, the main-event form) count as not ticked. It's only a note: entry still depends on the day's rule (members, payment), not on the ticks.
 
 ## Design
 

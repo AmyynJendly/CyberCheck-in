@@ -1,6 +1,25 @@
 import { query } from "./db";
 import { dayLabel, getEventDays } from "./events";
+import { enrollParts } from "./stand";
 import { tunisDateTime } from "./time";
+
+const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/**
+ * Did the form's checkbox answer tick this day? A day is ticked when one of the
+ * answers starts with the day's label: label "Offensive Web 101" matches the
+ * option "Offensive Web 101(from interception to exploitation)".
+ */
+export function tickedDay(enrollment: string | null, label: string): boolean {
+  const l = norm(label);
+  return !!l && enrollParts(enrollment ?? "").some((p) => norm(p).startsWith(l));
+}
+
+/** Days that at least one registration ticked: only these get a "ticked" column. */
+function tickableDays<D extends { id: string; label: string | null; day_date: string }>(days: D[], enrollments: (string | null)[]): Set<string> {
+  const filled = enrollments.filter((e): e is string => !!e);
+  return new Set(days.filter((d) => filled.some((e) => tickedDay(e, dayLabel(d)))).map((d) => d.id));
+}
 
 /** RFC 4180 cell + spreadsheet formula-injection guard (keeps phone numbers like +216… intact). */
 export function csvCell(value: unknown): string {
@@ -62,6 +81,7 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
     else paidOther.set(p.attendee_id, [...(paidOther.get(p.attendee_id) ?? []), `${p.kind} ${p.amount} DT${p.channel === "stand" ? " at the stand" : ` (${p.paid_to})`}`]);
   }
   const hasPaidDays = days.some((d) => d.access !== "free") || payments.rows.length > 0;
+  const tickable = tickableDays(days, attendees.rows.map((a) => a.enrollment));
 
   const header = [
     "name",
@@ -75,18 +95,21 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
     "email_status",
     "registered_at",
     ...(hasPaidDays ? ["member_until", "enrollment", "paid_before"] : []),
+    ...(tickable.size ? ["attended_not_ticked"] : []),
     ...days.flatMap((d) => {
       const l = `${dayLabel(d)} (${d.day_date})`;
       return [
         `${l} checked_at`,
         `${l} checked_by`,
         `${l} method`,
+        ...(tickable.has(d.id) ? [`${l} ticked`] : []),
         ...(hasPaidDays ? [`${l} paid`, `${l} paid_to`] : []),
       ];
     }),
   ];
   const lines = [csvLine(header)];
   for (const a of attendees.rows) {
+    const notTicked = days.filter((d) => tickable.has(d.id) && map.has(`${a.id}|${d.id}`) && !tickedDay(a.enrollment, dayLabel(d)));
     lines.push(
       csvLine([
         a.full_name,
@@ -100,11 +123,13 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
         a.email_status,
         tunisDateTime(a.created_at),
         ...(hasPaidDays ? [a.member_until ?? "", a.enrollment ?? "", (paidOther.get(a.id) ?? []).join("; ")] : []),
+        ...(tickable.size ? [notTicked.map((d) => dayLabel(d)).join("; ")] : []),
         ...days.flatMap((d) => {
           const c = map.get(`${a.id}|${d.id}`);
           const p = paid.get(`${a.id}|${d.id}`);
           return [
             ...(c ? [tunisDateTime(c.checked_at), c.checked_by, c.method] : ["", "", ""]),
+            ...(tickable.has(d.id) ? [tickedDay(a.enrollment, dayLabel(d)) ? "yes" : c ? "NOT TICKED" : ""] : []),
             ...(hasPaidDays ? (p ? [`${p.kind} ${p.amount} DT${p.channel === "stand" ? " (stand)" : ""}`, p.paid_to] : ["", ""]) : []),
           ];
         }),
@@ -135,8 +160,9 @@ export async function buildDayCsv(eventId: string, dayId: string): Promise<{ csv
     paid_amount: number | null;
     paid_to: string | null;
     paid_channel: string | null;
+    enrollment: string | null;
   }>(
-    `select a.full_name, a.email, a.phone, a.class_year, a.team_name, a.source, m.valid_until as member_until,
+    `select a.full_name, a.email, a.phone, a.class_year, a.team_name, a.source, m.valid_until as member_until, a.enrollment,
             c.checked_at, s.name as checked_by, c.method,
             p.kind as paid_kind, p.amount as paid_amount, ps.name as paid_to, p.channel as paid_channel
        from checkins c
@@ -149,8 +175,13 @@ export async function buildDayCsv(eventId: string, dayId: string): Promise<{ csv
       order by c.checked_at`,
     [dayId],
   );
+  const enrollments = await query<{ enrollment: string }>(
+    "select distinct enrollment from attendees where event_id = $1 and enrollment is not null",
+    [eventId],
+  );
+  const tickable = tickableDays([day], enrollments.rows.map((e) => e.enrollment)).has(day.id);
   const lines = [
-    csvLine(["name", "email", "phone", "class_year", "team_name", "source", "member_until", "checked_at", "checked_by", "method", "paid", "paid_to"]),
+    csvLine(["name", "email", "phone", "class_year", "team_name", "source", "member_until", "checked_at", "checked_by", "method", ...(tickable ? ["ticked"] : []), "paid", "paid_to"]),
     ...r.rows.map((x) =>
       csvLine([
         x.full_name,
@@ -163,6 +194,7 @@ export async function buildDayCsv(eventId: string, dayId: string): Promise<{ csv
         tunisDateTime(x.checked_at),
         x.checked_by,
         x.method,
+        ...(tickable ? [tickedDay(x.enrollment, dayLabel(day)) ? "yes" : "NOT TICKED"] : []),
         x.paid_kind ? `${x.paid_kind} ${x.paid_amount} DT${x.paid_channel === "stand" ? " (stand)" : ""}` : "",
         x.paid_to ?? "",
       ]),

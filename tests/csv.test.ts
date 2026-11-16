@@ -4,7 +4,7 @@ import { GET as backupGET } from "@/app/api/events/[id]/backup/route";
 import { GET as backupPdfGET } from "@/app/api/events/[id]/backup.pdf/route";
 import { checkInByToken } from "@/lib/checkin";
 import { createWalkIn, ingestFormSubmission } from "@/lib/attendees";
-import { csvCell } from "@/lib/csv";
+import { csvCell, tickedDay } from "@/lib/csv";
 import { closePool, query } from "@/lib/db";
 import { DAY_MS, cookieFor, makeEvent, makeStaff, params, req, tokenOf } from "./helpers";
 
@@ -99,6 +99,47 @@ describe("CSV export", () => {
     expect(h2).toEqual(["name", "email", "phone", "class_year", "team_name", "source", "member_until", "checked_at", "checked_by", "method", "paid", "paid_to"]);
     expect(r2.map((r) => r[0])).toEqual(['Amine "The Root" Haddad']);
     expect(r2[0][8]).toBe("Omar");
+  });
+
+  it("points out sessions attended but not ticked on the form", async () => {
+    const ev = await makeEvent({ days: [0, 1] });
+    await query("update event_days set label = 'Linux fundamentals' where id = $1", [ev.days[0].id]);
+    await query("update event_days set label = 'Offensive Web 101' where id = $1", [ev.days[1].id]);
+    const hr = await makeStaff("hr");
+    const a = await ingestFormSubmission(ev.id, "t1", {
+      full_name: "Ticker", email: "ticker@example.com", phone: null, class_year: null, team_name: null,
+      enrollment: "Linux fundamentals, Networks under attack",
+    });
+    await checkInByToken({ staff: hr, eventId: ev.id, token: await tokenOf(a.attendeeId) });
+    await checkInByToken({ staff: hr, eventId: ev.id, token: await tokenOf(a.attendeeId), now: new Date(Date.now() + DAY_MS) });
+    await ingestFormSubmission(ev.id, "t2", {
+      full_name: "Web Only", email: "web@example.com", phone: null, class_year: null, team_name: null,
+      enrollment: "Offensive Web 101(from interception to exploitation)",
+    });
+    await createWalkIn({ eventId: ev.id, staff: hr, fields: { full_name: "Walker", email: null, phone: null, class_year: null, team_name: null } });
+
+    const cookie = await cookieFor(await makeStaff("admin"));
+    const res = await csvGET(req("GET", `/api/events/${ev.id}/export.csv`, { cookie }), params({ id: ev.id }));
+    const [header, ...rows] = parseCsv(Buffer.from(await res.arrayBuffer()).subarray(3).toString("utf8"));
+    const rec = Object.fromEntries(rows.map((r) => [r[0], Object.fromEntries(header.map((h, i) => [h, r[i]]))]));
+    const linux = `Linux fundamentals (${ev.days[0].day_date}) ticked`;
+    const web = `Offensive Web 101 (${ev.days[1].day_date}) ticked`;
+    expect(rec.Ticker).toMatchObject({ attended_not_ticked: "Offensive Web 101", [linux]: "yes", [web]: "NOT TICKED" });
+    expect(rec["Web Only"]).toMatchObject({ attended_not_ticked: "", [linux]: "", [web]: "yes" });
+    expect(rec.Walker).toMatchObject({ attended_not_ticked: "Linux fundamentals", [linux]: "NOT TICKED", [web]: "" });
+
+    const dayRes = await csvGET(req("GET", `/api/events/${ev.id}/export.csv?day_id=${ev.days[1].id}`, { cookie }), params({ id: ev.id }));
+    const [h2, ...r2] = parseCsv(Buffer.from(await dayRes.arrayBuffer()).subarray(3).toString("utf8"));
+    expect(h2).toContain("ticked");
+    expect(r2.map((r) => [r[0], r[h2.indexOf("ticked")]])).toEqual([["Ticker", "NOT TICKED"]]);
+  });
+
+  it("tickedDay matches a day label against the start of each ticked option", () => {
+    const e = "Linux fundamentals, Offensive Web 101(from interception to exploitation), Cybersecurity and CTF fundamentals";
+    expect(tickedDay(e, "Offensive Web 101")).toBe(true);
+    expect(tickedDay(e, "Networks under attack")).toBe(false);
+    expect(tickedDay(e, "Main event")).toBe(false);
+    expect(tickedDay(null, "Linux fundamentals")).toBe(false);
   });
 
   it("csvCell keeps phone numbers and escapes quotes/commas", () => {
