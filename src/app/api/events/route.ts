@@ -20,7 +20,7 @@ export const GET = route(async (req) => {
   }>(
     `select e.id, e.slug, e.name, e.location, e.membership_fee,
             coalesce(json_agg(json_build_object('id', d.id, 'day_date', d.day_date, 'label', d.label,
-                                                'access', d.access, 'entry_fee', d.entry_fee)
+                                                'access', d.access, 'entry_fee', d.entry_fee, 'capacity', d.capacity)
                               order by d.day_date) filter (where d.id is not null), '[]') as days
        from events e left join event_days d on d.event_id = e.id
       where e.is_active

@@ -3,8 +3,8 @@ import { query, withTransaction, isUniqueViolation } from "./db";
 import { audit } from "./audit";
 import { HttpError } from "./http";
 import { newQrToken, newShortCode } from "./ids";
-import { hasFreeAccess, insertCheckinTx, insertPaymentTx, paymentOptions, type PaymentKind, type PaymentOption } from "./checkin";
-import { grantMembershipTx } from "./members";
+import { insertCheckin, insertPaymentTx, isDayFull, paymentOptions, type PaymentKind, type PaymentOption } from "./checkin";
+import { findValidMembership, grantMembershipTx } from "./members";
 import { dayLabel, requireEvent, resolveEventDay } from "./events";
 import { cleanText, looksLikeEmail, normalizeEmail } from "./validate";
 import type { Staff } from "./auth";
@@ -138,6 +138,7 @@ export type WalkInResult =
     }
   | { status: "NO_EVENT_DAY" }
   | { status: "PAYMENT_REQUIRED"; name: string; day_label: string; options: PaymentOption[] }
+  | { status: "FULL"; name: string; day_label: string; capacity: number; checked_in: number }
   | { status: "EMAIL_EXISTS"; attendee_id: string; name: string };
 
 /**
@@ -161,7 +162,17 @@ export async function createWalkIn(opts: {
   const day = await resolveEventDay(eventId, opts);
   if (!day) return { status: "NO_EVENT_DAY" };
 
-  const access = await hasFreeAccess({ email: fields.email, phone: fields.phone }, day);
+  const capacity = day.capacity ?? null;
+  const full = async () => {
+    const n = await query<{ n: number }>("select seats_taken as n from event_days where id = $1", [day.id]);
+    return { status: "FULL" as const, name: fields.full_name, day_label: dayLabel(day), capacity: capacity ?? 0, checked_in: n.rows[0].n };
+  };
+  if (capacity) {
+    const f = await full();
+    if (f.checked_in >= capacity) return f; // say so before asking for money
+  }
+  const member = await findValidMembership({ email: fields.email, phone: fields.phone }, day.day_date);
+  const access = { ok: day.access === "free" || !!member, memberId: member?.id ?? null };
   let option: PaymentOption | null = null;
   if (!access.ok) {
     const options = paymentOptions(day, event.membership_fee);
@@ -188,7 +199,8 @@ export async function createWalkIn(opts: {
           throw err;
         }
       });
-      const ci = await insertCheckinTx(c, { attendeeId: a.id, eventId, day, staff, method: "walk_in" });
+      // Takes a seat (DB trigger); a full day throws DAY_FULL and rolls back the new attendee too.
+      const ci = await insertCheckin(c, { attendeeId: a.id, eventId, day, staff, method: "walk_in" });
       let isMember = !!access.memberId;
       if (option) {
         let memberId: string | null = null;
@@ -212,6 +224,7 @@ export async function createWalkIn(opts: {
       };
     });
   } catch (err) {
+    if (isDayFull(err)) return full();
     if (!(err instanceof EmailTaken)) throw err;
     const r = await query<{ id: string; full_name: string }>(
       "select id, full_name from attendees where event_id = $1 and email = $2",

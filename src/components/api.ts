@@ -36,6 +36,20 @@ export async function api<T = Record<string, unknown>>(
   path: string,
   opts: { method?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<T> {
+  const method = opts.method ?? (opts.body !== undefined ? "POST" : "GET");
+  try {
+    return await apiOnce<T>(path, opts);
+  } catch (err) {
+    // A GET changes nothing, so retry once after a network blip (mobile data at the door).
+    if (method === "GET" && err instanceof ApiError && err.code === "NETWORK") {
+      await new Promise((r) => setTimeout(r, 600));
+      return apiOnce<T>(path, opts);
+    }
+    throw err;
+  }
+}
+
+async function apiOnce<T>(path: string, opts: { method?: string; body?: unknown; timeoutMs?: number }): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 15_000);
   let res: Response;

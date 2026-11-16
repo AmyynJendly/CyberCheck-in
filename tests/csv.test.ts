@@ -49,10 +49,13 @@ describe("CSV export", () => {
     expect(w.status).toBe("OK");
     await ingestFormSubmission(ev.id, "r3", { full_name: "Bilel No-show", email: "bilel@example.com", phone: null, class_year: null, team_name: null });
 
-    const res = await csvGET(req("GET", `/api/events/${ev.id}/export.csv`, { cookie: await cookieFor(sara) }), params({ id: ev.id }));
+    // HR can't export; admins can.
+    expect((await csvGET(req("GET", `/api/events/${ev.id}/export.csv`, { cookie: await cookieFor(sara) }), params({ id: ev.id }))).status).toBe(403);
+    const admin = await makeStaff("admin");
+    const res = await csvGET(req("GET", `/api/events/${ev.id}/export.csv`, { cookie: await cookieFor(admin) }), params({ id: ev.id }));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/csv/);
-    expect(res.headers.get("content-disposition")).toMatch(new RegExp(`attachment; filename="${ev.slug}-checkins-`));
+    expect(res.headers.get("content-disposition")).toMatch(new RegExp(`attachment; filename="${ev.slug}-all-`));
     const bytes = Buffer.from(await res.arrayBuffer());
     expect(bytes.subarray(0, 3).toString("hex")).toBe("efbbbf"); // UTF-8 BOM for Excel
     const [header, ...rows] = parseCsv(bytes.subarray(3).toString("utf8"));
@@ -87,7 +90,15 @@ describe("CSV export", () => {
     expect(rec[2]).toMatchObject({ source: "walk_in", added_by: "Omar", [`${d1} checked_by`]: "Omar", [`${d1} method`]: "walk_in", [`${d2} checked_at`]: "" });
 
     const log = await query("select staff_id from audit_log where action = 'export' and event_id = $1", [ev.id]);
-    expect(log.rows).toEqual([{ staff_id: sara.id }]);
+    expect(log.rows).toEqual([{ staff_id: admin.id }]);
+
+    // One CSV per session day: only the people checked in that day.
+    const dayRes = await csvGET(req("GET", `/api/events/${ev.id}/export.csv?day_id=${ev.days[1].id}`, { cookie: await cookieFor(admin) }), params({ id: ev.id }));
+    expect(dayRes.headers.get("content-disposition")).toContain(`${ev.slug}-${ev.days[1].day_date}-day-2.csv`);
+    const [h2, ...r2] = parseCsv(Buffer.from(await dayRes.arrayBuffer()).subarray(3).toString("utf8"));
+    expect(h2).toEqual(["name", "email", "phone", "class_year", "team_name", "source", "member_until", "checked_at", "checked_by", "method", "paid", "paid_to"]);
+    expect(r2.map((r) => r[0])).toEqual(['Amine "The Root" Haddad']);
+    expect(r2[0][8]).toBe("Omar");
   });
 
   it("csvCell keeps phone numbers and escapes quotes/commas", () => {
@@ -105,7 +116,8 @@ describe("backup list", () => {
     const hr = await makeStaff("hr");
     await ingestFormSubmission(ev.id, "b", { full_name: "Zed", email: null, phone: null, class_year: "1st", team_name: "T" });
     await ingestFormSubmission(ev.id, "a", { full_name: "Adam <script>", email: null, phone: null, class_year: null, team_name: null });
-    const cookie = await cookieFor(hr);
+    expect((await backupGET(req("GET", `/api/events/${ev.id}/backup`, { cookie: await cookieFor(hr) }), params({ id: ev.id }))).status).toBe(403);
+    const cookie = await cookieFor(await makeStaff("admin"));
     const res = await backupGET(req("GET", `/api/events/${ev.id}/backup`, { cookie }), params({ id: ev.id }));
     const html = await res.text();
     expect(res.headers.get("content-type")).toMatch(/text\/html/);

@@ -14,6 +14,13 @@ function cleanAccess(v: unknown): DayAccess {
   return v as DayAccess;
 }
 
+function cleanCapacity(v: unknown): number | null {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 100000) throw new HttpError(400, "BAD_CAPACITY", "Capacity must be a whole number of seats (or empty for no limit).");
+  return n;
+}
+
 function cleanFee(v: unknown, field: string): number {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0 || n > 10000) throw new HttpError(400, "BAD_FEE", `${field} must be an amount in DT.`);
@@ -30,22 +37,24 @@ export function cleanSlug(v: unknown): string {
   return s;
 }
 
-export function cleanDay(v: unknown): { day_date: string; label: string | null; access: DayAccess; entry_fee: number } {
-  const d = v as { day_date?: unknown; label?: unknown; access?: unknown; entry_fee?: unknown };
+export function cleanDay(v: unknown): { day_date: string; label: string | null; access: DayAccess; entry_fee: number; capacity: number | null } {
+  const d = v as { day_date?: unknown; label?: unknown; access?: unknown; entry_fee?: unknown; capacity?: unknown };
   if (!isIsoDate(d?.day_date)) throw new HttpError(400, "BAD_DATE", "Day dates must be YYYY-MM-DD.");
   return {
     day_date: d.day_date as string,
     label: cleanText(d.label, 60),
     access: cleanAccess(d.access),
     entry_fee: d.entry_fee === undefined || d.entry_fee === "" ? 5 : cleanFee(d.entry_fee, "Entry fee"),
+    capacity: cleanCapacity(d.capacity),
   };
 }
 
 export async function listAdminEvents() {
   const r = await query(
     `select e.id, e.slug, e.name, e.location, e.form_secret, e.is_active, e.created_at, e.membership_fee,
+            e.email_subject, e.email_body,
             coalesce(json_agg(json_build_object('id', d.id, 'day_date', d.day_date, 'label', d.label,
-                     'access', d.access, 'entry_fee', d.entry_fee,
+                     'access', d.access, 'entry_fee', d.entry_fee, 'capacity', d.capacity,
                      'checkins', (select count(*) from checkins c where c.event_day_id = d.id and c.undone_at is null))
                      order by d.day_date) filter (where d.id is not null), '[]') as days,
             (select count(*) from attendees a where a.event_id = e.id)::int as attendees
@@ -72,8 +81,8 @@ export async function createEvent(staff: Staff, body: Record<string, unknown>) {
       const id = r.rows[0].id;
       for (const [i, d] of days.entries()) {
         await c.query(
-          "insert into event_days (event_id, day_date, label, access, entry_fee) values ($1, $2, $3, $4, $5)",
-          [id, d.day_date, d.label ?? `Day ${i + 1}`, d.access, d.entry_fee],
+          "insert into event_days (event_id, day_date, label, access, entry_fee, capacity) values ($1, $2, $3, $4, $5, $6)",
+          [id, d.day_date, d.label ?? `Day ${i + 1}`, d.access, d.entry_fee, d.capacity],
         );
       }
       await audit({ staffId: staff.id, action: "create_event", eventId: id, details: { slug, name, location, days } }, c);
@@ -104,6 +113,8 @@ export async function updateEvent(staff: Staff, id: string, body: Record<string,
   if (body.location !== undefined) add("location", cleanText(body.location, 200));
   if (body.is_active !== undefined) add("is_active", !!body.is_active);
   if (body.membership_fee !== undefined) add("membership_fee", cleanFee(body.membership_fee, "Membership fee"));
+  if (body.email_subject !== undefined) add("email_subject", typeof body.email_subject === "string" && body.email_subject.trim() ? body.email_subject.trim().slice(0, 300) : null);
+  if (body.email_body !== undefined) add("email_body", typeof body.email_body === "string" && body.email_body.trim() ? body.email_body.slice(0, 20000) : null);
   const regenerate = body.regenerate_secret === true;
   if (regenerate) {
     params.push(newFormSecret());
@@ -132,8 +143,8 @@ export async function addDay(staff: Staff, eventId: string, body: Record<string,
       if (!ev.rowCount) throw new HttpError(404, "EVENT_NOT_FOUND", "Event not found.");
       const n = await c.query<{ n: number }>("select count(*)::int as n from event_days where event_id = $1", [eventId]);
       const r = await c.query<{ id: string }>(
-        "insert into event_days (event_id, day_date, label, access, entry_fee) values ($1, $2, $3, $4, $5) returning id",
-        [eventId, d.day_date, d.label ?? `Day ${n.rows[0].n + 1}`, d.access, d.entry_fee],
+        "insert into event_days (event_id, day_date, label, access, entry_fee, capacity) values ($1, $2, $3, $4, $5, $6) returning id",
+        [eventId, d.day_date, d.label ?? `Day ${n.rows[0].n + 1}`, d.access, d.entry_fee, d.capacity],
       );
       await audit({ staffId: staff.id, action: "create_day", eventId, details: { day_id: r.rows[0].id, ...d } }, c);
       return { id: r.rows[0].id };
@@ -168,6 +179,11 @@ export async function updateDay(staff: Staff, eventId: string, dayId: string, bo
     params.push(cleanFee(body.entry_fee, "Entry fee"));
     sets.push(`entry_fee = $${params.length}`);
     changes.entry_fee = params[params.length - 1];
+  }
+  if (body.capacity !== undefined) {
+    params.push(cleanCapacity(body.capacity));
+    sets.push(`capacity = $${params.length}`);
+    changes.capacity = params[params.length - 1];
   }
   if (!sets.length) throw new HttpError(400, "BAD_REQUEST", "Nothing to update.");
   try {

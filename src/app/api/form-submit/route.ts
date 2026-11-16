@@ -4,12 +4,12 @@ import { HttpError, json, readJson, route } from "@/lib/http";
 import { safeEqual } from "@/lib/ids";
 import { auditSafe } from "@/lib/audit";
 import { cleanAttendeeFields, ingestFormSubmission } from "@/lib/attendees";
-import { runAfterResponse, sendAttendeeEmail } from "@/lib/email";
+import { drainAfterResponse, pendingEmailCount } from "@/lib/email";
 import { cleanText } from "@/lib/validate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const DUMMY_SECRET = "x".repeat(32);
 
@@ -28,14 +28,21 @@ export const POST = route(async (req) => {
     throw new HttpError(401, "UNAUTHORIZED", "Wrong event or form secret.");
   }
 
+  // The Apps Script's 5-minute trigger pings here so queued emails keep moving.
+  if (body.ping === true) {
+    await drainAfterResponse();
+    return json({ ok: true, pending_emails: await pendingEmailCount() });
+  }
+
   const responseId = cleanText(body.response_id, 200);
   if (!responseId) throw new HttpError(400, "BAD_REQUEST", "response_id is required.");
   const fields = cleanAttendeeFields(body);
 
   const result = await ingestFormSubmission(event.id, responseId, fields);
   if (result.sendEmail) {
-    // Respond first; Vercel keeps the function alive for this (next/server `after`).
-    await runAfterResponse(() => sendAttendeeEmail(result.attendeeId, { reason: "form" }));
+    // Respond first; the email goes out through the single-sender queue
+    // (Vercel keeps the function alive for this via next/server `after`).
+    await drainAfterResponse();
   }
   return json({ ok: true, outcome: result.outcome, attendee_id: result.attendeeId, email_queued: result.sendEmail });
 });

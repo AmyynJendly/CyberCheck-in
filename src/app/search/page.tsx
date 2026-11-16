@@ -107,6 +107,7 @@ function SearchInner() {
       if (r.status === "OK") setMsg(row.id, { tone: "ok", text: `Checked in for ${r.day_label}.` });
       else if (r.status === "ALREADY_CHECKED_IN") setMsg(row.id, { tone: "warn", text: `Already checked in at ${fmtTime(r.checked_at)} by ${r.by_staff_name}.` });
       else if (r.status === "NO_EVENT_DAY") setMsg(row.id, { tone: "error", text: "No event day today." });
+      else if (r.status === "FULL") setMsg(row.id, { tone: "error", text: "Session full: no seats left. Not checked in." });
       else setMsg(row.id, { tone: "error", text: r.status });
       await runSearch(q);
     } catch (e) {
@@ -131,6 +132,7 @@ function SearchInner() {
           text: r.payment ? `Paid ${fmtDT(r.payment.amount)}${r.payment.kind === "membership" ? ", now a member" : ""}. Checked in.` : `Checked in for ${r.day_label}.`,
         });
       else if (r.status === "ALREADY_CHECKED_IN") setMsg(row.id, { tone: "warn", text: `Already checked in at ${fmtTime(r.checked_at)} by ${r.by_staff_name}. No payment recorded.` });
+      else if (r.status === "FULL") setMsg(row.id, { tone: "error", text: "Session full: no seats left. Nothing was charged." });
       else setMsg(row.id, { tone: "error", text: r.status });
       await runSearch(q);
     } catch (e) {

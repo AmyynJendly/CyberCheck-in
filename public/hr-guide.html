@@ -18,6 +18,7 @@
   --ok: #248a3d;
   --warn: #c93400;
   --bad: #d70015;
+  --pay: #0040dd;
   --on-signal: #ffffff;
   --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
   --body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
@@ -26,13 +27,13 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #000000; --paper: #1c1c1e; --ink: #ffffff; --muted: #98989f; --line: #38383a; --accent: #40c8e0;
-    --ok: #059669; --warn: #ea580c; --bad: #dc2626;
+    --ok: #059669; --warn: #ea580c; --bad: #dc2626; --pay: #0a84ff;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #000000; --paper: #1c1c1e; --ink: #ffffff; --muted: #98989f; --line: #38383a; --accent: #40c8e0;
-  --ok: #059669; --warn: #ea580c; --bad: #dc2626;
+  --ok: #059669; --warn: #ea580c; --bad: #dc2626; --pay: #0a84ff;
   color-scheme: dark;
 }
 
@@ -90,13 +91,15 @@ b { font-weight: 600; }
 .ui { font-weight: 600; white-space: nowrap; }
 
 /* Result tiles */
-.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 960px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .tile { border-radius: 6px; overflow: hidden; border: 1px solid var(--line); display: grid; grid-template-rows: auto 1fr; min-width: 0; }
 .tile .screen { color: var(--on-signal); padding: 12px 14px; font-family: var(--display); font-weight: 700; font-size: 17px; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1.15; }
 .tile .screen small { display: block; font-family: var(--body); font-weight: 500; font-size: 12px; text-transform: none; letter-spacing: 0; opacity: 0.92; margin-top: 3px; }
 .tile.ok .screen { background: var(--ok); }
 .tile.warn .screen { background: var(--warn); }
 .tile.bad .screen { background: var(--bad); }
+.tile.pay .screen { background: var(--pay); }
 .tile .do { padding: 10px 14px 12px; font-size: 13px; display: grid; gap: 4px; align-content: start; }
 .tile .do .verdict { font-weight: 600; }
 .note { font-size: 12.5px; color: var(--muted); margin-top: 10px; }
@@ -109,6 +112,7 @@ b { font-weight: 600; }
 .fix tr:first-child th, .fix tr:first-child td { border-top: 0; }
 .tag { display: inline-block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--on-signal); border-radius: 3px; padding: 1px 5px; vertical-align: 1px; }
 .tag.bad { background: var(--bad); }
+.tag.pay { background: var(--pay); }
 .side { display: grid; gap: 20px; }
 .codebox { border: 1px dashed var(--muted); border-radius: 6px; padding: 12px 14px; display: grid; gap: 8px; font-size: 13px; }
 .codebox .sample { font-family: var(--mono); font-weight: 600; font-size: 26px; letter-spacing: 0.22em; color: var(--accent); }
@@ -123,19 +127,20 @@ ul.rules { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 13
 @media print {
   :root:root:root {
     --bg: #ffffff; --paper: #ffffff; --ink: #000000; --muted: #444444; --line: #bbbbbb; --accent: #0a7f94;
-    --ok: #248a3d; --warn: #c93400; --bad: #d70015;
+    --ok: #248a3d; --warn: #c93400; --bad: #d70015; --pay: #0040dd;
     color-scheme: light;
   }
-  @page { size: A4 portrait; margin: 10mm; }
-  body { padding: 0; font-size: 9pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .sheet { border: 0; padding: 0; max-width: none; gap: 11px; }
+  @page { size: A4 portrait; margin: 9mm; }
+  body { padding: 0; font-size: 8.6pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sheet { border: 0; padding: 0; max-width: none; gap: 9px; }
   h1 { font-size: 21pt; }
   h2 { font-size: 8.6pt; margin-bottom: 6px; }
   .top { padding-bottom: 10px; }
-  ol.steps, .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  ol.steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   .cols { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; }
-  .tile .screen { font-size: 11pt; padding: 7px 10px; }
-  .tile .do, .fix, ul.rules, .codebox, .note { font-size: 8.1pt; }
+  .tile .screen { font-size: 10pt; padding: 6px 9px; }
+  .tile .do, .fix, ul.rules, .codebox, .note { font-size: 7.8pt; }
   .fix th, .fix td { padding: 3px 6px 3px 0; }
   .codebox .sample { font-size: 17pt; }
   .tile, .codebox, .fix tr { break-inside: avoid; }
@@ -174,7 +179,6 @@ ul.rules { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 13
         <div class="screen">✓ Welcome<small>name · team · class · day</small></div>
         <div class="do">
           <p class="verdict">Checked in. Let them in.</p>
-          <p>You'll feel a short buzz on Android.</p>
         </div>
       </article>
       <article class="tile warn">
@@ -184,10 +188,17 @@ ul.rules { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 13
           <p>Same person coming back in? Let them in; they're already counted. A different person? Don't admit them on this code. Ask their name and use Search.</p>
         </div>
       </article>
-      <article class="tile bad">
-        <div class="screen">Invalid · Wrong event · Not saved</div>
+      <article class="tile pay">
+        <div class="screen">Payment needed<small>not a club member</small></div>
         <div class="do">
-          <p class="verdict">Not checked in yet.</p>
+          <p class="verdict">Take the cash first, then tap what they paid.</p>
+          <p>Didn&apos;t pay? Tap <b>Didn&apos;t pay</b>: they&apos;re not checked in.</p>
+        </div>
+      </article>
+      <article class="tile bad">
+        <div class="screen">Invalid · Wrong event · Full · Not saved</div>
+        <div class="do">
+          <p class="verdict">Not checked in.</p>
           <p>Find the red message in the table below and follow it.</p>
         </div>
       </article>
@@ -203,12 +214,14 @@ ul.rules { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 13
           <tr><th>The QR won't scan (cracked screen, too dark, printed badly)</th><td>Ask for the 6-character code in their email. <span class="ui">Search</span> → type the code → <span class="ui">Check in</span>.</td></tr>
           <tr><th><span class="tag bad">Red</span> Invalid QR</th><td>It isn't one of our codes (another screenshot, another app). Ask for their code or name and use <span class="ui">Search</span>.</td></tr>
           <tr><th><span class="tag bad">Red</span> Wrong event</th><td>They registered for a different Cybertrace event. Send them to the admin.</td></tr>
+          <tr><th><span class="tag bad">Red</span> Session full</th><td>No seats left today. Nobody was charged. Tell them politely and call the admin if needed.</td></tr>
+          <tr><th><span class="tag pay">Blue</span> Payment needed</th><td>Members-only day (or competition) and they&apos;re not on the member list. Joining the club or the entry fee: <b>cash first</b>, then tap <span class="ui">Paid 15 DT</span> or <span class="ui">Paid 5 DT</span>. Says they&apos;re a member? <span class="ui">Search</span> → <span class="ui">Member? Find on List</span>.</td></tr>
           <tr><th><span class="tag bad">Red</span> Not saved / red "Connection lost" bar</th><td>Nothing was saved. Scan again once the red bar is gone. If the network stays down, tick them on the printed backup list, then check them in with <span class="ui">Search</span> when you're back online, the same day.</td></tr>
           <tr><th>Lost the email, or no phone</th><td><span class="ui">Search</span> by name or phone number. Confirm their phone or email with them, then <span class="ui">Check in</span>.</td></tr>
           <tr><th>The email never arrived</th><td>Ask them to check spam. Then <span class="ui">Search</span> → <span class="ui">Resend QR</span>. Typo in the address? <span class="ui">Fix email</span> → type it again → <span class="ui">Save &amp; send</span>.</td></tr>
-          <tr><th>Not registered at all</th><td><span class="ui">Walk-in</span> → full name (phone, email, class and team are optional) → <span class="ui">Add &amp; check in</span>. If you add an email, they get a QR for the next day.</td></tr>
-          <tr><th>Walk-in says "already registered with that email"</th><td>They did register. Tap <span class="ui">Find them and check in</span>.</td></tr>
-          <tr><th>You checked in the wrong person</th><td><span class="ui">My recent</span> → <span class="ui">Undo</span>. It works on your own check-ins for 10 minutes; after that, ask an admin.</td></tr>
+          <tr><th>Not registered at all</th><td><span class="ui">Add Person</span> → full name, email, phone → <span class="ui">Add &amp; Check In</span>. With an email, they get a QR for the next days.</td></tr>
+          <tr><th>Add Person says "already registered with this email"</th><td>They did register. Tap <span class="ui">Find them and check in</span>.</td></tr>
+          <tr><th>You checked in the wrong person</th><td><span class="ui">My Check-ins</span> → <span class="ui">Undo</span>. It works on your own check-ins for 10 minutes; after that, ask an admin.</td></tr>
         </tbody>
       </table>
     </section>
@@ -228,7 +241,8 @@ ul.rules { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 13
           <li>Never share your PIN or hand over your phone while you're logged in.</li>
           <li>One code lets one person in, once per day.</li>
           <li>Don't post or photograph attendees' codes; they work like a ticket.</li>
-          <li>When your shift ends: Home → <span class="ui">Log out</span>.</li>
+          <li>Cash you take is saved under your name; your total is on the home screen. Hand it to the admin at the end.</li>
+          <li>When your shift ends: Home → <span class="ui">Sign Out</span>.</li>
         </ul>
       </section>
     </aside>

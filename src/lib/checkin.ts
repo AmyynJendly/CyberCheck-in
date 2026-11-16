@@ -1,24 +1,29 @@
 // ---------------------------------------------------------------------------
-// THE scan / check-in logic. Every way of checking someone in goes through
-// recordCheckin() or payAndCheckIn(), which rely on the partial unique index
-// `one_checkin_per_day` (attendee_id, event_day_id) WHERE undone_at IS NULL.
-// There is no "select, then insert": we insert, and a unique violation means
-// "already checked in".
+// THE scan / check-in logic.
 //
-// Paid days (see migrations/002): before checking someone in we check the
-// day's access rule. Members (and everyone on free days) go straight in;
-// others get PAYMENT_REQUIRED, and payAndCheckIn() records the cash payment
-// and the check-in in ONE transaction.
+// Correctness: every check-in is an INSERT guarded by the partial unique index
+// `one_checkin_per_day` (attendee_id, event_day_id) WHERE undone_at IS NULL.
+// There is no "select, then insert": a unique violation means "already in".
+// Capacity: enforced by a database trigger (migrations/004): a check-in INSERT
+// takes a seat from event_days.seats_taken or fails with DAY_FULL.
+// Paid days: members (and everyone on free days) go straight in; others get
+// PAYMENT_REQUIRED, and payAndCheckIn() writes payment + check-in in ONE
+// transaction.
+//
+// Speed: a scan is 1 lookup query (event, day, attendee, existing check-in,
+// membership, paid entry — all at once) + 1 write statement (check-in + seat +
+// audit + member link, atomic). Every round trip matters when the DB is remote.
 //
 // Kept in one module on purpose so an offline queue (v2) can reuse it.
 // ---------------------------------------------------------------------------
 import type { PoolClient } from "pg";
-import { query, withTransaction, isUniqueViolation } from "./db";
+import { query, withTransaction, isUniqueViolation, type Queryable } from "./db";
 import { audit, auditSafe } from "./audit";
 import { HttpError } from "./http";
 import { normalizeToken } from "./qr-format";
-import { dayLabel, requireEvent, resolveEventDay, type DayRow, type EventRow } from "./events";
-import { findValidMembership, grantMembershipTx } from "./members";
+import { dayLabel, type DayRow } from "./events";
+import { grantMembershipTx } from "./members";
+import { tunisDate } from "./time";
 import type { Staff } from "./auth";
 
 export type CheckinMethod = "qr" | "manual" | "walk_in";
@@ -61,6 +66,7 @@ export type ScanResult =
       day_label: string;
       options: PaymentOption[];
     }
+  | { status: "FULL"; name: string; day_label: string; capacity: number; checked_in: number }
   | { status: "WRONG_EVENT"; name: string; other_event_name: string }
   | { status: "INVALID" }
   | { status: "NO_EVENT_DAY" };
@@ -77,18 +83,53 @@ export interface AttendeeLite {
   event_name: string;
 }
 
-const ATTENDEE_LITE_SQL = `
-  select a.id, a.event_id, a.full_name, a.team_name, a.class_year, a.email, a.phone, a.member_id, e.name as event_name
-  from attendees a join events e on e.id = a.event_id`;
+export type ContextDay = DayRow & { capacity: number | null; checked_in: number };
 
-async function findActiveCheckin(attendeeId: string, dayId: string) {
-  const r = await query<{ id: string; checked_at: string; by_staff_name: string }>(
-    `select c.id, c.checked_at, s.name as by_staff_name
-       from checkins c join staff s on s.id = c.staff_id
-      where c.attendee_id = $1 and c.event_day_id = $2 and c.undone_at is null`,
-    [attendeeId, dayId],
+interface ScanContext {
+  event: { id: string; name: string; is_active: boolean; membership_fee: number } | null;
+  day: ContextDay | null;
+  attendee: AttendeeLite | null;
+  existing: { id: string; checked_at: string; by_staff_name: string } | null;
+  member_id: string | null; // a membership valid on the day (linked, or matched by email/phone)
+  paid_entry: boolean;
+}
+
+/** Everything a scan needs, in ONE query. */
+async function loadContext(eventId: string, who: { token?: string; attendeeId?: string }, dayId: string | null, today: string): Promise<ScanContext> {
+  const r = await query<ScanContext>(
+    `with ev as (
+       select id, name, is_active, membership_fee from events where id = $1
+     ), day as (
+       select d.id, d.event_id, d.day_date, d.label, d.access, d.entry_fee, d.capacity, d.seats_taken as checked_in
+         from event_days d
+        where d.event_id = $1 and (case when $2::uuid is not null then d.id = $2 else d.day_date = $3::date end)
+     ), att as (
+       select a.id, a.event_id, a.full_name, a.team_name, a.class_year, a.email, a.phone, a.member_id, e.name as event_name
+         from attendees a join events e on e.id = a.event_id
+        where ($4::text is not null and a.qr_token = $4) or ($5::uuid is not null and a.id = $5)
+        limit 1
+     )
+     select
+       (select row_to_json(ev) from ev) as event,
+       (select row_to_json(day) from day) as day,
+       (select row_to_json(att) from att) as attendee,
+       (select row_to_json(x) from (
+          select c.id, c.checked_at, s.name as by_staff_name
+            from checkins c join staff s on s.id = c.staff_id, att, day
+           where c.attendee_id = att.id and c.event_day_id = day.id and c.undone_at is null
+        ) x) as existing,
+       (select m.id from members m, att, day
+         where m.valid_until >= day.day_date
+           and (m.id = att.member_id
+                or (att.email is not null and m.email = att.email)
+                or (m.phone_key is not null and m.phone_key = right(regexp_replace(coalesce(att.phone, ''), '\\D', '', 'g'), 8)))
+         order by (m.id = att.member_id) desc nulls last
+         limit 1) as member_id,
+       exists (select 1 from payments p, att, day
+                where p.attendee_id = att.id and p.event_day_id = day.id and p.kind = 'entry' and p.voided_at is null) as paid_entry`,
+    [eventId, dayId, today, who.token ?? null, who.attendeeId ?? null],
   );
-  return r.rows[0] ?? null;
+  return r.rows[0];
 }
 
 // ---------------------------------------------------------------------------
@@ -97,62 +138,54 @@ async function findActiveCheckin(attendeeId: string, dayId: string) {
 
 /** What a non-member can pay on this day. Empty on free days. */
 export function paymentOptions(day: Pick<DayRow, "access" | "entry_fee">, membershipFee: number): PaymentOption[] {
-  const join: PaymentOption = { kind: "membership", amount: membershipFee, label: "Join the club" };
+  const join: PaymentOption = { kind: "membership", amount: Number(membershipFee), label: "Join the club" };
   if (day.access === "members") return [join];
-  if (day.access === "members_or_fee") return [{ kind: "entry", amount: day.entry_fee, label: "Entry only" }, join];
+  if (day.access === "members_or_fee") return [{ kind: "entry", amount: Number(day.entry_fee), label: "Entry only" }, join];
   return [];
-}
-
-/**
- * Can this person come in for free today? Free day, a valid membership
- * (linked, or matched by email/phone; a match gets linked), or an entry fee
- * already paid for this day.
- */
-export async function hasFreeAccess(
-  who: { attendeeId?: string; memberId?: string | null; email?: string | null; phone?: string | null },
-  day: DayRow,
-): Promise<{ ok: boolean; memberId: string | null }> {
-  const member = await findValidMembership(who, day.day_date);
-  if (member) {
-    if (who.attendeeId && who.memberId !== member.id) {
-      await query("update attendees set member_id = $2, updated_at = now() where id = $1", [who.attendeeId, member.id]);
-    }
-    return { ok: true, memberId: member.id };
-  }
-  if (day.access === "free") return { ok: true, memberId: null };
-  if (day.access === "members_or_fee" && who.attendeeId) {
-    const paid = await query("select 1 from payments where attendee_id = $1 and event_day_id = $2 and kind = 'entry' and voided_at is null", [who.attendeeId, day.id]);
-    if (paid.rowCount) return { ok: true, memberId: null };
-  }
-  return { ok: false, memberId: null };
 }
 
 // ---------------------------------------------------------------------------
 // Writing check-ins
 // ---------------------------------------------------------------------------
 
-/** Insert the check-in row (and its audit entry) in the caller's transaction. Throws on unique violation. */
-export async function insertCheckinTx(
-  client: PoolClient,
-  args: { attendeeId: string; eventId: string; day: DayRow; staff: Staff; method: CheckinMethod },
+/** The DB trigger refused the check-in: no seat left that day. */
+export function isDayFull(err: unknown): boolean {
+  const e = err as { code?: string; message?: string };
+  return e?.code === "P0001" && e.message === "DAY_FULL";
+}
+
+/**
+ * ONE statement: insert check-in (the trigger takes a seat) + audit entry
+ * (+ link the attendee to their membership). Atomic on its own.
+ * Throws a unique violation (one_checkin_per_day) when already in, and
+ * DAY_FULL (see isDayFull) when no seat is left.
+ */
+export async function insertCheckin(
+  client: Queryable | undefined,
+  args: { attendeeId: string; eventId: string; day: DayRow; staff: Staff; method: CheckinMethod; linkMemberId?: string | null },
 ): Promise<{ id: string; checked_at: string }> {
-  const r = await client.query<{ id: string; checked_at: string }>(
-    `insert into checkins (attendee_id, event_day_id, staff_id, method)
-     values ($1, $2, $3, $4) returning id, checked_at`,
-    [args.attendeeId, args.day.id, args.staff.id, args.method],
-  );
-  const row = r.rows[0];
-  await audit(
-    {
-      staffId: args.staff.id,
-      action: args.method === "qr" ? "checkin" : args.method === "manual" ? "manual_checkin" : "walk_in",
-      eventId: args.eventId,
-      attendeeId: args.attendeeId,
-      details: { checkin_id: row.id, event_day_id: args.day.id, day: args.day.day_date, method: args.method },
-    },
+  const action = args.method === "qr" ? "checkin" : args.method === "manual" ? "manual_checkin" : "walk_in";
+  const r = await query<{ id: string | null; checked_at: string | null }>(
+    `with ins as (
+       insert into checkins (attendee_id, event_day_id, staff_id, method)
+       values ($1, $2, $3, $4)
+       returning id, checked_at
+     ), aud as (
+       insert into audit_log (staff_id, action, event_id, attendee_id, details)
+       select $3, $5, $6, $1, jsonb_build_object('checkin_id', ins.id, 'event_day_id', $2::uuid, 'day', $7::text, 'method', $4::text)
+         from ins
+       returning 1
+     ), lnk as (
+       update attendees set member_id = $8, updated_at = now()
+        where id = $1 and $8::uuid is not null and member_id is distinct from $8::uuid and exists (select 1 from ins)
+       returning 1
+     )
+     select (select id from ins) as id, (select checked_at from ins) as checked_at`,
+    [args.attendeeId, args.day.id, args.staff.id, args.method, action, args.eventId, args.day.day_date, args.linkMemberId ?? null],
     client,
   );
-  return row;
+  const row = r.rows[0];
+  return { id: row.id!, checked_at: row.checked_at! };
 }
 
 /** Insert a cash payment (and its audit entry) in the caller's transaction. */
@@ -178,18 +211,19 @@ export async function insertPaymentTx(
   return r.rows[0].id;
 }
 
-async function alreadyResult(attendee: AttendeeLite, day: DayRow, staff: Staff, method: CheckinMethod) {
-  const existing = await findActiveCheckin(attendee.id, day.id);
-  if (!existing) return null;
-  await auditSafe({
-    staffId: staff.id,
-    action: "checkin_rejected",
-    eventId: attendee.event_id,
-    attendeeId: attendee.id,
-    details: { reason: "ALREADY_CHECKED_IN", method, event_day_id: day.id, existing_checkin_id: existing.id },
-  });
+async function findActiveCheckin(attendeeId: string, dayId: string) {
+  const r = await query<{ id: string; checked_at: string; by_staff_name: string }>(
+    `select c.id, c.checked_at, s.name as by_staff_name
+       from checkins c join staff s on s.id = c.staff_id
+      where c.attendee_id = $1 and c.event_day_id = $2 and c.undone_at is null`,
+    [attendeeId, dayId],
+  );
+  return r.rows[0] ?? null;
+}
+
+function alreadyResult(attendee: AttendeeLite, day: DayRow, existing: { id: string; checked_at: string; by_staff_name: string }): ScanResult {
   return {
-    status: "ALREADY_CHECKED_IN" as const,
+    status: "ALREADY_CHECKED_IN",
     checkin_id: existing.id,
     attendee_id: attendee.id,
     name: attendee.full_name,
@@ -199,91 +233,124 @@ async function alreadyResult(attendee: AttendeeLite, day: DayRow, staff: Staff, 
   };
 }
 
-/**
- * Atomically check someone in, optionally recording a payment (and granting
- * membership) in the same transaction. A concurrent duplicate gets
- * ALREADY_CHECKED_IN and nothing — no payment — is written for it.
- */
-async function commitCheckin(
-  attendee: AttendeeLite,
-  day: DayRow,
-  staff: Staff,
-  method: CheckinMethod,
-  paid: PaymentOption | null,
-  isMember: boolean,
-): Promise<ScanResult> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const row = await withTransaction(async (c) => {
-        // Check-in row FIRST: a concurrent duplicate blocks here and then fails on
-        // one_checkin_per_day, before it can touch members or payments.
-        const ci = await insertCheckinTx(c, { attendeeId: attendee.id, eventId: attendee.event_id, day, staff, method });
-        let memberNow = isMember;
-        if (paid) {
-          let memberId: string | null = null;
-          if (paid.kind === "membership") {
-            memberId = await grantMembershipTx(c, { fullName: attendee.full_name, email: attendee.email, phone: attendee.phone, staff });
-            await c.query("update attendees set member_id = $2, updated_at = now() where id = $1", [attendee.id, memberId]);
-            memberNow = true;
-          }
-          await insertPaymentTx(c, { eventId: attendee.event_id, day, attendeeId: attendee.id, staff, option: paid, memberId });
-        }
-        return { ...ci, memberNow };
-      });
-      return {
-        status: "OK",
-        checkin_id: row.id,
-        attendee_id: attendee.id,
-        name: attendee.full_name,
-        team_name: attendee.team_name,
-        class_year: attendee.class_year,
-        day_label: dayLabel(day),
-        checked_at: row.checked_at,
-        is_member: row.memberNow,
-        payment: paid ? { kind: paid.kind, amount: paid.amount } : null,
-      };
-    } catch (err) {
-      if (!isUniqueViolation(err, "one_checkin_per_day")) throw err;
-    }
-    const already = await alreadyResult(attendee, day, staff, method);
-    if (already) return already;
-  }
-  throw new Error("check-in kept conflicting; giving up");
+function fullResult(attendee: AttendeeLite, day: ContextDay, checkedIn: number): ScanResult {
+  return { status: "FULL", name: attendee.full_name, day_label: dayLabel(day), capacity: day.capacity ?? 0, checked_in: checkedIn };
 }
 
 async function reject(staff: Staff, eventId: string, reason: string, extra: Record<string, unknown> = {}, attendeeId?: string) {
   await auditSafe({ staffId: staff.id, action: "checkin_rejected", eventId, attendeeId, details: { reason, ...extra } });
 }
 
-/** The shared path once we know who it is and for which event. */
+/**
+ * Write the check-in (and the payment / membership when paid). A concurrent
+ * duplicate gets ALREADY_CHECKED_IN and nothing — no payment — is written.
+ */
+async function commit(
+  ctx: { attendee: AttendeeLite; day: ContextDay; staff: Staff; method: CheckinMethod; memberId: string | null },
+  paid: PaymentOption | null,
+): Promise<ScanResult> {
+  const { attendee, day, staff, method } = ctx;
+  const ok = (row: { id: string; checked_at: string }, isMember: boolean): ScanResult => ({
+    status: "OK",
+    checkin_id: row.id,
+    attendee_id: attendee.id,
+    name: attendee.full_name,
+    team_name: attendee.team_name,
+    class_year: attendee.class_year,
+    day_label: dayLabel(day),
+    checked_at: row.checked_at,
+    is_member: isMember,
+    payment: paid ? { kind: paid.kind, amount: paid.amount } : null,
+  });
+
+  try {
+    if (!paid) {
+      // Fast path: one atomic statement, no explicit transaction.
+      const row = await insertCheckin(undefined, { attendeeId: attendee.id, eventId: attendee.event_id, day, staff, method, linkMemberId: ctx.memberId });
+      return ok(row, !!ctx.memberId);
+    }
+    const result = await withTransaction(async (c) => {
+      // Check-in row FIRST: a concurrent duplicate (or a full day) fails here
+      // before it can touch members or payments.
+      const row = await insertCheckin(c, { attendeeId: attendee.id, eventId: attendee.event_id, day, staff, method, linkMemberId: ctx.memberId });
+      let isMember = !!ctx.memberId;
+      if (paid) {
+        let memberId: string | null = null;
+        if (paid.kind === "membership") {
+          memberId = await grantMembershipTx(c, { fullName: attendee.full_name, email: attendee.email, phone: attendee.phone, staff });
+          await c.query("update attendees set member_id = $2, updated_at = now() where id = $1", [attendee.id, memberId]);
+          isMember = true;
+        }
+        await insertPaymentTx(c, { eventId: attendee.event_id, day, attendeeId: attendee.id, staff, option: paid, memberId });
+      }
+      return ok(row, isMember);
+    });
+    return result;
+  } catch (err) {
+    if (isDayFull(err)) {
+      await reject(staff, attendee.event_id, "FULL", { event_day_id: day.id, capacity: day.capacity }, attendee.id);
+      return fullResult(attendee, day, day.capacity ?? 0);
+    }
+    if (!isUniqueViolation(err, "one_checkin_per_day")) throw err;
+  }
+  const existing = await findActiveCheckin(attendee.id, day.id);
+  if (!existing) throw new Error("check-in conflicted but no active check-in was found; try again");
+  await reject(staff, attendee.event_id, "ALREADY_CHECKED_IN", { method, event_day_id: day.id, existing_checkin_id: existing.id }, attendee.id);
+  return alreadyResult(attendee, day, existing);
+}
+
+export interface CheckinOptions {
+  staff: Staff;
+  eventId: string;
+  overrideDayId?: string | null; // admin only
+  now?: Date; // for tests
+}
+
+/** The shared path for scan, manual check-in and pay-then-check-in. */
 async function admit(
-  ev: EventRow,
-  attendee: AttendeeLite,
   opts: CheckinOptions,
+  who: { token?: string; attendeeId?: string },
   method: CheckinMethod,
   pay: PaymentKind | null,
 ): Promise<ScanResult> {
-  if (attendee.event_id !== ev.id) {
-    await reject(opts.staff, ev.id, "WRONG_EVENT", { other_event_id: attendee.event_id }, attendee.id);
+  const override = opts.overrideDayId && opts.staff.role === "admin" ? opts.overrideDayId : null;
+  const ctx = await loadContext(opts.eventId, who, override, tunisDate(opts.now));
+  if (!ctx.event) throw new HttpError(404, "EVENT_NOT_FOUND", "Event not found.");
+  if (!ctx.event.is_active) throw new HttpError(409, "EVENT_INACTIVE", "This event is not active.");
+
+  const attendee = ctx.attendee;
+  if (!attendee) {
+    if (who.attendeeId) throw new HttpError(404, "ATTENDEE_NOT_FOUND", "Attendee not found.");
+    await reject(opts.staff, opts.eventId, "INVALID", { why: "unknown_token" });
+    return { status: "INVALID" };
+  }
+  if (attendee.event_id !== opts.eventId) {
+    await reject(opts.staff, opts.eventId, "WRONG_EVENT", { other_event_id: attendee.event_id }, attendee.id);
     return { status: "WRONG_EVENT", name: attendee.full_name, other_event_name: attendee.event_name };
   }
-  const day = await resolveEventDay(ev.id, opts);
+  const day = ctx.day;
   if (!day) {
-    await reject(opts.staff, ev.id, "NO_EVENT_DAY", {}, attendee.id);
+    if (override) throw new HttpError(400, "BAD_DAY", "That day does not belong to this event.");
+    await reject(opts.staff, opts.eventId, "NO_EVENT_DAY", {}, attendee.id);
     return { status: "NO_EVENT_DAY" };
   }
-  const already = await alreadyResult(attendee, day, opts.staff, method);
-  if (already) return already;
+  if (ctx.existing) {
+    await reject(opts.staff, opts.eventId, "ALREADY_CHECKED_IN", { method, event_day_id: day.id, existing_checkin_id: ctx.existing.id }, attendee.id);
+    return alreadyResult(attendee, day, ctx.existing);
+  }
+  // Full? Say so before asking anyone for money. (Re-checked under a lock when writing.)
+  if (day.capacity && day.checked_in >= day.capacity) {
+    await reject(opts.staff, opts.eventId, "FULL", { event_day_id: day.id, capacity: day.capacity }, attendee.id);
+    return fullResult(attendee, day, day.checked_in);
+  }
 
-  const access = await hasFreeAccess(
-    { attendeeId: attendee.id, memberId: attendee.member_id, email: attendee.email, phone: attendee.phone },
-    day,
-  );
-  if (access.ok) return commitCheckin(attendee, day, opts.staff, method, null, !!access.memberId);
+  const freeAccess = day.access === "free" || !!ctx.member_id || (day.access === "members_or_fee" && ctx.paid_entry);
+  const base = { attendee, day, staff: opts.staff, method, memberId: ctx.member_id };
+  if (freeAccess) return commit(base, null);
 
-  const options = paymentOptions(day, ev.membership_fee);
+  const options = paymentOptions(day, ctx.event.membership_fee);
   if (!pay) {
-    await reject(opts.staff, ev.id, "PAYMENT_REQUIRED", { event_day_id: day.id, access: day.access }, attendee.id);
+    await reject(opts.staff, opts.eventId, "PAYMENT_REQUIRED", { event_day_id: day.id, access: day.access }, attendee.id);
     return {
       status: "PAYMENT_REQUIRED",
       attendee_id: attendee.id,
@@ -296,53 +363,29 @@ async function admit(
   }
   const option = options.find((o) => o.kind === pay);
   if (!option) throw new HttpError(400, "PAYMENT_NOT_ALLOWED", "That payment isn't offered on this day.");
-  return commitCheckin(attendee, day, opts.staff, method, option, false);
-}
-
-export interface CheckinOptions {
-  staff: Staff;
-  eventId: string;
-  overrideDayId?: string | null; // admin only
-  now?: Date; // for tests
+  return commit(base, option);
 }
 
 /** Scanner: QR token → result. */
 export async function checkInByToken(opts: CheckinOptions & { token: unknown }): Promise<ScanResult> {
-  const ev = await requireEvent(opts.eventId, { active: true });
   const token = normalizeToken(opts.token);
   if (!token) {
     await reject(opts.staff, opts.eventId, "INVALID", { why: "malformed" });
     return { status: "INVALID" };
   }
-  const r = await query<AttendeeLite>(`${ATTENDEE_LITE_SQL} where a.qr_token = $1`, [token]);
-  const attendee = r.rows[0];
-  if (!attendee) {
-    await reject(opts.staff, opts.eventId, "INVALID", { why: "unknown_token" });
-    return { status: "INVALID" };
-  }
-  return admit(ev, attendee, opts, "qr", null);
+  return admit(opts, { token }, "qr", null);
 }
 
 /** Search → "Check in" button. */
 export async function checkInAttendee(opts: CheckinOptions & { attendeeId: string }): Promise<ScanResult> {
-  const ev = await requireEvent(opts.eventId, { active: true });
-  const attendee = await loadAttendee(opts.attendeeId);
-  return admit(ev, attendee, opts, "manual", null);
+  return admit(opts, { attendeeId: opts.attendeeId }, "manual", null);
 }
 
 /** After PAYMENT_REQUIRED: the staff member took the cash. Records payment + check-in atomically. */
 export async function payAndCheckIn(
   opts: CheckinOptions & { attendeeId: string; kind: PaymentKind; method: "qr" | "manual" },
 ): Promise<ScanResult> {
-  const ev = await requireEvent(opts.eventId, { active: true });
-  const attendee = await loadAttendee(opts.attendeeId);
-  return admit(ev, attendee, opts, opts.method, opts.kind);
-}
-
-async function loadAttendee(id: string): Promise<AttendeeLite> {
-  const r = await query<AttendeeLite>(`${ATTENDEE_LITE_SQL} where a.id = $1`, [id]);
-  if (!r.rows[0]) throw new HttpError(404, "ATTENDEE_NOT_FOUND", "Attendee not found.");
-  return r.rows[0];
+  return admit(opts, { attendeeId: opts.attendeeId }, opts.method, opts.kind);
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +394,7 @@ async function loadAttendee(id: string): Promise<AttendeeLite> {
 
 export const UNDO_WINDOW_MINUTES = 10;
 
-/** HR: own check-ins within 10 minutes. Admin: any check-in. (Payments are voided separately by an admin.) */
+/** HR: own check-ins within 10 minutes. Admin: any check-in. (Payments are cancelled separately by an admin.) */
 export async function undoCheckin(opts: { checkinId: string; staff: Staff }) {
   const isAdmin = opts.staff.role === "admin";
   return withTransaction(async (c) => {

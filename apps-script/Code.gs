@@ -14,7 +14,8 @@
  *   testConnection()  check API_URL / EVENT_SLUG / FORM_SECRET
  *   syncAll()         re-send every existing response (idempotent)
  *   showPending()     log responses waiting to be retried
- *   retryPending()    retry now (also runs automatically every 5 minutes)
+ *   retryPending()    retry now (also runs automatically every 5 minutes, and
+ *                     nudges the app to send any QR emails still waiting)
  */
 
 // Exact question titles in the form (matching is case-insensitive).
@@ -46,8 +47,9 @@ function onFormSubmit(e) {
   }
 }
 
-/** Time-driven trigger (every 5 minutes): retry responses that failed to post. */
+/** Time-driven trigger (every 5 minutes): retry responses that failed to post, and nudge the email queue. */
 function retryPending() {
+  pingQueue_();
   // Document lock = "only one retry run at a time". The pending list itself is
   // guarded by the (separate) script lock, held only for milliseconds, so new
   // submissions are never blocked by a long retry run.
@@ -157,6 +159,23 @@ function clearPending() {
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+/** Ask the app to send any QR emails still waiting in its queue (cheap, safe to repeat). */
+function pingQueue_() {
+  try {
+    var cfg = checkConfig_();
+    UrlFetchApp.fetch(cfg.apiUrl, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'X-Form-Secret': cfg.secret },
+      payload: JSON.stringify({ event_slug: cfg.slug, ping: true }),
+      muteHttpExceptions: true,
+      followRedirects: false
+    });
+  } catch (err) {
+    console.warn('Queue ping failed: ' + err);
+  }
+}
 
 function checkConfig_() {
   var props = PropertiesService.getScriptProperties();

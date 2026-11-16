@@ -2,20 +2,21 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Banknote, BookOpen, Check, FileSpreadsheet, History, Printer, ScanLine, Search, Settings, UserPlus } from "lucide-react";
+import { BookOpen, Check, History, LayoutDashboard, ScanLine, Search, UserPlus } from "lucide-react";
 import { useApp } from "@/components/AppContext";
 import { api } from "@/components/api";
 import { useStats } from "@/components/useStats";
 import { DayPicker } from "@/components/DayPicker";
 import { IconTile, Initials, Notice, OfflineBanner, Row, Section, Sheet, SheetAction, Spinner, btn } from "@/components/ui";
-import { accessLabel, dayName } from "@/components/types";
+import { accessLabel, dayName, fmtDT } from "@/components/types";
 
 const ic = "h-[17px] w-[17px]";
 
+/** The HR app: scan, search, add a person. Everything else lives in the admin dashboard. */
 export default function Home() {
   const { ready, me, events, event, selectEvent, activeDay, dayOverrideId } = useApp();
-  const { stats } = useStats(event?.id, dayOverrideId, 15_000);
-  const [confirmLogout, setConfirmLogout] = useState(false);
+  const { stats } = useStats(event?.id, dayOverrideId, 10_000);
+  const [account, setAccount] = useState(false);
 
   const logout = async () => {
     await api("/api/auth/logout", { body: {} }).catch(() => {});
@@ -24,12 +25,16 @@ export default function Home() {
 
   if (!ready) return <Spinner />;
 
-  const checked = stats?.today?.checked_in ?? 0;
-  const registered = stats?.registered ?? 0;
-  const pct = registered ? Math.min(100, Math.round((checked / registered) * 100)) : 0;
+  const today = stats?.today ?? null;
+  const capacity = today?.capacity ?? activeDay?.capacity ?? null;
+  const checked = today?.checked_in ?? 0;
+  const max = capacity ?? stats?.registered ?? 0;
+  const pct = max ? Math.min(100, Math.round((checked / max) * 100)) : 0;
+  const left = capacity !== null ? Math.max(0, capacity - checked) : null;
+  const paidDay = !!activeDay && activeDay.access !== "free";
 
   return (
-    <div className="mx-auto min-h-dvh max-w-2xl pb-[max(2.5rem,env(safe-area-inset-bottom))]">
+    <div className="mx-auto min-h-dvh max-w-lg pb-[max(2.5rem,env(safe-area-inset-bottom))]">
       <OfflineBanner />
       <header className="flex items-end justify-between px-4 pb-1 pt-[max(1.25rem,env(safe-area-inset-top))]">
         <div>
@@ -38,15 +43,15 @@ export default function Home() {
           </p>
           <h1 className="t-large">Check-in</h1>
         </div>
-        <button type="button" onClick={() => setConfirmLogout(true)} aria-label={`Signed in as ${me?.name}. Account`} className="mb-1 active:opacity-60">
+        <button type="button" onClick={() => setAccount(true)} aria-label={`Signed in as ${me?.name}. Account`} className="mb-1 active:opacity-60">
           <Initials name={me?.name ?? "?"} size={36} />
         </button>
       </header>
 
-      <main className="mt-5 space-y-7 px-4">
+      <main className="mt-5 space-y-6 px-4">
         {events.length === 0 && (
           <Notice tone="warn">
-            No active events. {me?.role === "admin" ? <Link href="/admin">Create one in Admin.</Link> : "Ask an admin to create one."}
+            No active event. {me?.role === "admin" ? <Link href="/admin/events">Create one in the admin dashboard.</Link> : "Ask an admin."}
           </Notice>
         )}
 
@@ -56,7 +61,6 @@ export default function Home() {
               <Row
                 key={e.id}
                 title={e.name}
-                subtitle={e.days.map((d) => d.day_date).join(" · ") || "No days yet"}
                 onClick={() => selectEvent(e.id)}
                 trailing={e.id === event?.id ? <Check className="h-5 w-5 text-accent" strokeWidth={2.6} aria-label="Selected" /> : undefined}
               />
@@ -69,110 +73,119 @@ export default function Home() {
             <section className="rounded-[16px] bg-bg2 p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="t-title2 truncate">{event.name}</h2>
-                  <p className="t-subhead mt-0.5 text-label2">
-                    {[event.location, activeDay ? `${dayName(activeDay)}${dayOverrideId ? " (picked)" : ""}` : null].filter(Boolean).join(" · ")}
-                  </p>
+                  <h2 className="t-title3 truncate">{event.name}</h2>
+                  <p className="t-subhead text-label2">{activeDay ? `${dayName(activeDay)}${dayOverrideId ? " (picked)" : ""}` : "No session today"}</p>
                 </div>
                 {activeDay ? (
-                  <span className="t-caption shrink-0 rounded-full bg-sys-green/15 px-2.5 py-1 font-semibold text-sys-green">Live</span>
+                  left === 0 ? (
+                    <span className="t-caption shrink-0 rounded-full bg-sys-red/15 px-2.5 py-1 font-semibold text-sys-red">Full</span>
+                  ) : (
+                    <span className="t-caption shrink-0 rounded-full bg-sys-green/15 px-2.5 py-1 font-semibold text-sys-green">Open</span>
+                  )
                 ) : (
-                  <span className="t-caption shrink-0 rounded-full bg-sys-orange/15 px-2.5 py-1 font-semibold text-sys-orange">No event today</span>
+                  <span className="t-caption shrink-0 rounded-full bg-sys-orange/15 px-2.5 py-1 font-semibold text-sys-orange">Closed</span>
                 )}
               </div>
-
-              <div className="mt-5 flex items-baseline gap-2">
-                <span className="font-rounded text-[56px] font-bold leading-none tracking-tight tabular">{stats ? (stats.today ? checked : "–") : " "}</span>
-                <span className="t-body text-label2">
-                  of <span className="tabular">{registered}</span> checked in{activeDay ? " today" : ""}
-                </span>
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-fill" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-                <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${pct}%` }} />
-              </div>
-              {stats && (
-                <dl className="mt-4 grid grid-cols-3 gap-2">
-                  <Stat label="Registered" value={stats.from_form} />
-                  <Stat label="Walk-ins" value={stats.walk_ins} />
-                  <Stat label="Email issues" value={stats.emails.failed} warn={stats.emails.failed > 0} />
-                </dl>
-              )}
-              {activeDay && activeDay.access !== "free" && (
-                <p className="t-subhead mt-4 rounded-[10px] bg-sys-blue/15 px-3 py-2 font-semibold text-sys-blue">Today: {accessLabel(activeDay, event.membership_fee)}</p>
-              )}
-              {stats && stats.days.length > 1 && (
-                <p className="t-footnote mt-3 text-label2">{stats.days.map((d) => `${d.label}: ${d.checked_in}`).join("  ·  ")}</p>
+              {activeDay && (
+                <>
+                  <div className="mt-4 flex items-baseline gap-2">
+                    <span className="font-rounded text-[52px] font-bold leading-none tracking-tight tabular">{stats ? checked : " "}</span>
+                    <span className="t-body text-label2">
+                      / <span className="tabular">{max}</span> {capacity !== null ? "seats" : "registered"}
+                    </span>
+                  </div>
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-fill" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+                    <div className={`h-full rounded-full transition-[width] duration-500 ${left === 0 ? "bg-sys-red" : "bg-accent"}`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <p className="t-footnote mt-2 text-label2">
+                    {left !== null ? (left === 0 ? "No seats left." : `${left} seat${left === 1 ? "" : "s"} left`) : "No seat limit"}
+                    {" · "}
+                    {accessLabel(activeDay, event.membership_fee)}
+                  </p>
+                </>
               )}
             </section>
 
-            {!activeDay && me?.role !== "admin" && (
-              <Notice tone="warn">Today isn't an event day, so check-in is off. An admin can pick a day.</Notice>
+            {paidDay && (stats?.my_cash_today ?? 0) > 0 && (
+              <Notice tone="info">
+                You&apos;ve collected <strong className="tabular">{fmtDT(stats!.my_cash_today)}</strong> today. Hand it to the admin at the end of your shift.
+              </Notice>
             )}
-            <DayPicker />
 
-            <Link href="/scan" className={`${btn("filled", "large")} w-full`}>
-              <ScanLine className="h-5 w-5" strokeWidth={2.4} aria-hidden />
+            {!activeDay && me?.role !== "admin" && <Notice tone="warn">Today isn&apos;t a session day, so check-in is off.</Notice>}
+
+            <Link href="/scan" className={`${btn("filled", "large")} h-[64px] w-full text-[19px]`}>
+              <ScanLine className="h-6 w-6" strokeWidth={2.4} aria-hidden />
               Scan Tickets
             </Link>
 
-            <Section inset={60}>
-              <Row href="/search" icon={<IconTile color="bg-sys-blue"><Search className={ic} strokeWidth={2.4} /></IconTile>} title="Search" chevron />
-              <Row href="/walkin" icon={<IconTile color="bg-sys-green"><UserPlus className={ic} strokeWidth={2.4} /></IconTile>} title="Walk-in" chevron />
-              <Row href="/recent" icon={<IconTile color="bg-sys-orange"><History className={ic} strokeWidth={2.4} /></IconTile>} title="My Check-ins" chevron />
-              {event.days.some((d) => d.access !== "free") && (
-                <Row href="/cash" icon={<IconTile color="bg-[#34c759]"><Banknote className={ic} strokeWidth={2.2} /></IconTile>} title="Cash" subtitle="Payments taken at the desk" chevron />
-              )}
-            </Section>
+            <div className="grid grid-cols-2 gap-3">
+              <Link href="/search" className="flex flex-col items-start gap-3 rounded-[16px] bg-bg2 p-4 active:bg-bg3">
+                <IconTile color="bg-sys-blue">
+                  <Search className={ic} strokeWidth={2.4} />
+                </IconTile>
+                <span>
+                  <span className="block t-headline">Search</span>
+                  <span className="block t-footnote text-label2">Name, phone, code</span>
+                </span>
+              </Link>
+              <Link href="/walkin" className="flex flex-col items-start gap-3 rounded-[16px] bg-bg2 p-4 active:bg-bg3">
+                <IconTile color="bg-sys-green">
+                  <UserPlus className={ic} strokeWidth={2.4} />
+                </IconTile>
+                <span>
+                  <span className="block t-headline">Add Person</span>
+                  <span className="block t-footnote text-label2">Not registered</span>
+                </span>
+              </Link>
+            </div>
 
-            <Section header="Exports" inset={60}>
+            <Section inset={60}>
               <Row
-                href={`/api/events/${event.id}/export.csv`}
-                external
-                icon={<IconTile color="bg-[#30b0c7]"><FileSpreadsheet className={ic} strokeWidth={2.2} /></IconTile>}
-                title="Download CSV"
+                href="/recent"
+                icon={
+                  <IconTile color="bg-sys-orange">
+                    <History className={ic} strokeWidth={2.4} />
+                  </IconTile>
+                }
+                title="My Check-ins"
+                subtitle="Undo a mistake (10 min)"
+                chevron
               />
               <Row
-                href={`/api/events/${event.id}/backup`}
+                href="/hr-guide.html"
                 external
-                icon={<IconTile color="bg-sys-gray"><Printer className={ic} strokeWidth={2.2} /></IconTile>}
-                title="Backup List"
-                subtitle="Print or save as PDF"
+                icon={
+                  <IconTile color="bg-sys-indigo">
+                    <BookOpen className={ic} strokeWidth={2.2} />
+                  </IconTile>
+                }
+                title="Desk Guide"
               />
             </Section>
           </>
         )}
 
-        <Section inset={60}>
-          <Row
-            href="/hr-guide.html"
-            external
-            icon={<IconTile color="bg-sys-indigo"><BookOpen className={ic} strokeWidth={2.2} /></IconTile>}
-            title="Desk Guide"
-          />
-          {me?.role === "admin" && (
-            <Row href="/admin" icon={<IconTile color="bg-sys-gray"><Settings className={ic} strokeWidth={2.2} /></IconTile>} title="Admin" chevron />
-          )}
-        </Section>
+        {me?.role === "admin" && (
+          <>
+            <Link href="/admin" className={`${btn("gray", "large")} w-full`}>
+              <LayoutDashboard className="h-5 w-5" strokeWidth={2.2} aria-hidden />
+              Admin Dashboard
+            </Link>
+            <DayPicker />
+          </>
+        )}
 
         <Section footer={`Signed in as ${me?.name} · ${me?.role === "admin" ? "Admin" : "HR"}`}>
-          <Row title="Sign Out" destructive onClick={() => setConfirmLogout(true)} />
+          <Row title="Sign Out" destructive onClick={() => setAccount(true)} />
         </Section>
       </main>
 
-      <Sheet open={confirmLogout} onClose={() => setConfirmLogout(false)} title={`Signed in as ${me?.name}`}>
+      <Sheet open={account} onClose={() => setAccount(false)} title={`Signed in as ${me?.name}`}>
         <SheetAction destructive onClick={logout}>
           Sign Out
         </SheetAction>
       </Sheet>
-    </div>
-  );
-}
-
-function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
-  return (
-    <div className="rounded-[10px] bg-bg3 px-3 py-2.5">
-      <dt className="t-caption text-label2">{label}</dt>
-      <dd className={`t-title3 tabular font-rounded ${warn ? "text-sys-orange" : ""}`}>{value}</dd>
     </div>
   );
 }

@@ -215,8 +215,9 @@ describe("cash", () => {
     await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: b.id, kind: "entry", method: "qr" });
     await payAndCheckIn({ staff: hr2, eventId: ev.id, attendeeId: c.id, kind: "entry", method: "manual" });
 
+    expect((await paymentsGET(req("GET", `/api/events/${ev.id}/payments`, { cookie: await cookieFor(hr) }), params({ id: ev.id }))).status).toBe(403);
     const summary = await body<{ total: number; by_staff: { staff_name: string; total: number; memberships: number; entries: number }[] }>(
-      await paymentsGET(req("GET", `/api/events/${ev.id}/payments`, { cookie: await cookieFor(hr) }), params({ id: ev.id })),
+      await paymentsGET(req("GET", `/api/events/${ev.id}/payments`, { cookie: await cookieFor(admin) }), params({ id: ev.id })),
     );
     expect(summary.total).toBe(25);
     expect(summary.by_staff).toEqual([
@@ -229,7 +230,7 @@ describe("cash", () => {
     expect((await voidPOST(req("POST", `/api/admin/payments/${payId}/void`, { cookie: await cookieFor(hr), body: {} }), params({ id: payId }))).status).toBe(403);
     const v = await voidPOST(req("POST", `/api/admin/payments/${payId}/void`, { cookie: await cookieFor(admin), body: { reason: "typed by mistake" } }), params({ id: payId }));
     expect(await body(v)).toMatchObject({ ok: true, membership_removed: true });
-    const after = await body<{ total: number }>(await paymentsGET(req("GET", `/api/events/${ev.id}/payments`, { cookie: await cookieFor(hr) }), params({ id: ev.id })));
+    const after = await body<{ total: number }>(await paymentsGET(req("GET", `/api/events/${ev.id}/payments`, { cookie: await cookieFor(admin) }), params({ id: ev.id })));
     expect(after.total).toBe(10);
     const m = await query<{ member_id: string | null }>("select member_id from attendees where id = $1", [a.id]);
     expect(m.rows[0].member_id).toBeNull();
@@ -239,7 +240,7 @@ describe("cash", () => {
     const ev = await makePaidEvent(["free", "members"]);
     const a = await person(ev.id, "Payer", `${uniq("p")}@example.com`);
     await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: a.id, kind: "membership", method: "qr", now: dayN(1) });
-    const res = await csvGET(req("GET", `/api/events/${ev.id}/export.csv`, { cookie: await cookieFor(hr) }), params({ id: ev.id }));
+    const res = await csvGET(req("GET", `/api/events/${ev.id}/export.csv`, { cookie: await cookieFor(admin) }), params({ id: ev.id }));
     const [header, row] = (await res.text()).replace(/^﻿/, "").trim().split("\r\n").map((l) => l.split(","));
     const rec = Object.fromEntries(header.map((h, i) => [h, row[i]]));
     expect(rec.member_until).toBe(defaultValidUntil());

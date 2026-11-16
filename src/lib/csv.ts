@@ -107,5 +107,60 @@ export async function buildEventCsv(eventId: string): Promise<{ csv: string; row
     );
   }
   // BOM so Excel opens UTF-8 (accents, Arabic names) correctly.
-  return { csv: "﻿" + lines.join("\r\n") + "\r\n", rows: attendees.rows.length };
+  return { csv: "\uFEFF" + lines.join("\r\n") + "\r\n", rows: attendees.rows.length };
+}
+
+/** CSV for ONE day: everyone checked in that day, with time, staff, method and payment. */
+export async function buildDayCsv(eventId: string, dayId: string): Promise<{ csv: string; rows: number; day: { day_date: string; label: string } | null }> {
+  const days = await getEventDays(eventId);
+  const day = days.find((d) => d.id === dayId);
+  if (!day) return { csv: "", rows: 0, day: null };
+  const r = await query<{
+    full_name: string;
+    email: string | null;
+    phone: string | null;
+    class_year: string | null;
+    team_name: string | null;
+    source: string;
+    member_until: string | null;
+    checked_at: string;
+    checked_by: string;
+    method: string;
+    paid_kind: string | null;
+    paid_amount: number | null;
+    paid_to: string | null;
+  }>(
+    `select a.full_name, a.email, a.phone, a.class_year, a.team_name, a.source, m.valid_until as member_until,
+            c.checked_at, s.name as checked_by, c.method,
+            p.kind as paid_kind, p.amount as paid_amount, ps.name as paid_to
+       from checkins c
+       join attendees a on a.id = c.attendee_id
+       join staff s on s.id = c.staff_id
+       left join members m on m.id = a.member_id
+       left join payments p on p.attendee_id = a.id and p.event_day_id = c.event_day_id and p.voided_at is null
+       left join staff ps on ps.id = p.staff_id
+      where c.event_day_id = $1 and c.undone_at is null
+      order by c.checked_at`,
+    [dayId],
+  );
+  const lines = [
+    csvLine(["name", "email", "phone", "class_year", "team_name", "source", "member_until", "checked_at", "checked_by", "method", "paid", "paid_to"]),
+    ...r.rows.map((x) =>
+      csvLine([
+        x.full_name,
+        x.email,
+        x.phone,
+        x.class_year,
+        x.team_name,
+        x.source,
+        x.member_until ?? "",
+        tunisDateTime(x.checked_at),
+        x.checked_by,
+        x.method,
+        x.paid_kind ? `${x.paid_kind} ${x.paid_amount} DT` : "",
+        x.paid_to ?? "",
+      ]),
+    ),
+  ];
+  return { csv: "\uFEFF" + lines.join("\r\n") + "\r\n", rows: r.rows.length, day: { day_date: day.day_date, label: dayLabel(day) } };
 }

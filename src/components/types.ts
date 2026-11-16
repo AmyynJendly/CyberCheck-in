@@ -11,6 +11,7 @@ export interface DayInfo {
   label: string | null;
   access: DayAccess;
   entry_fee: number;
+  capacity: number | null;
 }
 export interface EventInfo {
   id: string;
@@ -26,9 +27,10 @@ export interface Stats {
   from_form: number;
   walk_ins: number;
   emails: { sent: number; failed: number; pending: number; none: number };
-  today: { day_id: string; label: string; day_date: string; checked_in: number } | null;
+  today: { day_id: string; label: string; day_date: string; checked_in: number; capacity: number | null } | null;
   today_date: string;
-  days: { day_id: string; label: string; day_date: string; checked_in: number; walk_ins: number }[];
+  days: { day_id: string; label: string; day_date: string; checked_in: number; walk_ins: number; capacity: number | null }[];
+  my_cash_today: number;
 }
 export function dayName(d: Pick<DayInfo, "label" | "day_date">): string {
   return d.label?.trim() || d.day_date;

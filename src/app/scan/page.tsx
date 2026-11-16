@@ -33,6 +33,7 @@ type Result =
     }
   | { status: "ALREADY_CHECKED_IN"; name: string; checked_at: string; by_staff_name: string }
   | { status: "WRONG_EVENT"; name: string; other_event_name: string }
+  | { status: "FULL"; name: string; day_label: string; capacity: number; checked_in: number }
   | { status: "INVALID" }
   | { status: "NO_EVENT_DAY" }
   | { status: "ERROR"; message: string };
@@ -66,6 +67,8 @@ function summarize(r: Result): Omit<RecentScan, "id" | "at"> {
       return { tone: "warn", title: r.name, detail: `Already in · ${fmtTime(r.checked_at)}` };
     case "WRONG_EVENT":
       return { tone: "bad", title: r.name, detail: "Wrong event" };
+    case "FULL":
+      return { tone: "bad", title: r.name, detail: "Session full" };
     case "INVALID":
       return { tone: "bad", title: "Unknown code", detail: "Invalid QR" };
     case "NO_EVENT_DAY":
@@ -261,6 +264,7 @@ export default function ScanPage() {
   if (!ready) return <Spinner />;
 
   const checkedIn = stats?.today ? stats.today.checked_in + localCount : null;
+  const seatCap = stats?.today?.capacity ?? activeDay?.capacity ?? null;
   const dismiss = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
     setResult(null);
@@ -331,9 +335,11 @@ export default function ScanPage() {
             <div className="rounded-[18px] bg-black/55 px-4 py-1.5 text-center backdrop-blur-xl">
               <p className="font-rounded text-[26px] font-bold leading-none tabular text-white">
                 {checkedIn ?? "–"}
-                <span className="text-white/50"> / {stats?.registered ?? "–"}</span>
+                <span className="text-white/50"> / {seatCap ?? stats?.registered ?? "–"}</span>
               </p>
-              <p className="t-caption mt-0.5 text-white/70">Checked in today</p>
+              <p className="t-caption mt-0.5 text-white/70">
+                {seatCap !== null && checkedIn !== null ? (checkedIn >= seatCap ? "Full" : `${seatCap - checkedIn} seats left`) : "Checked in today"}
+              </p>
             </div>
           </div>
           <span
@@ -418,6 +424,11 @@ function ResultOverlay({ result, onClose }: { result: Result; onClose: () => voi
       title = "Already Checked In";
       name = result.name;
       lines = [`at ${fmtTime(result.checked_at)} by ${result.by_staff_name}`];
+      break;
+    case "FULL":
+      title = "Session Full";
+      name = result.name;
+      lines = [`${result.checked_in} / ${result.capacity} seats taken`, "Not checked in. Nothing charged."];
       break;
     case "WRONG_EVENT":
       title = "Wrong Event";

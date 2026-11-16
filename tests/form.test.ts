@@ -138,22 +138,32 @@ describe("email content", () => {
     expect(qrContent(a.rows[0].qr_token)).toMatch(/^CT1:[A-Za-z0-9_-]{43}$/);
   });
 
-  it("failed send → email_status failed with error; admin retry sends it", async () => {
-    process.env.DEV_EMAIL_MODE = "smtp"; // GMAIL_APP_PASSWORD is a placeholder in tests → send fails
+  it("Gmail not configured → the email waits in the queue (not failed); admin retry sends it once fixed", async () => {
+    process.env.DEV_EMAIL_MODE = "smtp"; // GMAIL_APP_PASSWORD is a placeholder in tests → can't send
     const email = `${uniq("f")}@example.com`;
     const res = await submit(ev, { response_id: "f1", full_name: "Fail", email });
     expect(res.status).toBe(200);
-    const a = await query<{ email_status: string; email_error: string }>("select email_status, email_error from attendees where email = $1", [email]);
-    expect(a.rows[0].email_status).toBe("failed");
+    const a = await query<{ email_status: string; email_error: string; email_attempts: number }>(
+      "select email_status, email_error, email_attempts from attendees where email = $1",
+      [email],
+    );
+    expect(a.rows[0]).toMatchObject({ email_status: "pending", email_attempts: 1 });
     expect(a.rows[0].email_error).toMatch(/GMAIL_APP_PASSWORD/);
 
     process.env.DEV_EMAIL_MODE = "log";
     const hrRes = await retryPOST(req("POST", "/api/admin/emails/retry-failed", { cookie: await cookieFor(hr), body: {} }), undefined);
     expect(hrRes.status).toBe(403);
     const r = await retryPOST(req("POST", "/api/admin/emails/retry-failed", { cookie: await cookieFor(admin), body: { event_id: ev.id } }), undefined);
-    expect(await body(r)).toMatchObject({ sent: 1, failed: 0, remaining: 0 });
+    expect(await body(r)).toMatchObject({ remaining: 0 });
     const after = await query<{ email_status: string }>("select email_status from attendees where email = $1", [email]);
     expect(after.rows[0].email_status).toBe("sent");
+    expect(outboxFor(email)).toHaveLength(1);
+  });
+
+  it("a malformed address fails right away (no endless retries)", async () => {
+    await submit(ev, { response_id: "bad1", full_name: "Bad", email: "not-an-email" });
+    const a = await query<{ email_status: string; email_error: string }>("select email_status, email_error from attendees where event_id = $1", [ev.id]);
+    expect(a.rows[0]).toEqual({ email_status: "failed", email_error: "Invalid email address." });
   });
 });
 

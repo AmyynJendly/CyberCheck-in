@@ -2,12 +2,12 @@
 import { HttpError, json, readJson, route } from "@/lib/http";
 import { requireStaff } from "@/lib/auth";
 import { cleanAttendeeFields, createWalkIn } from "@/lib/attendees";
-import { runAfterResponse, sendAttendeeEmail } from "@/lib/email";
+import { drainAfterResponse } from "@/lib/email";
 import { optionalUuid, requireUuid } from "@/lib/validate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export const POST = route(async (req) => {
   const staff = await requireStaff(req);
@@ -21,8 +21,6 @@ export const POST = route(async (req) => {
     fields: cleanAttendeeFields(body),
     overrideDayId: optionalUuid(body.event_day_id, "event_day_id"),
   });
-  if (result.status === "OK" && result.email_queued) {
-    await runAfterResponse(() => sendAttendeeEmail(result.attendee_id, { reason: "walk_in", staffId: staff.id }));
-  }
+  if (result.status === "OK" && result.email_queued) await drainAfterResponse();
   return json(result);
 });

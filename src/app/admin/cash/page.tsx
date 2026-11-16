@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApp, useDayParam } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
-import { NeedEvent, Notice, Page, Section, Segmented, Sheet, SheetAction, Spinner, fmtTime } from "@/components/ui";
+import { NeedEvent, Notice, Section, Segmented, Sheet, SheetAction, Spinner, fmtTime } from "@/components/ui";
+import { AdminTitle } from "@/components/admin/AdminShell";
 import { fmtDT } from "@/components/types";
 
 interface Payment {
@@ -24,7 +25,7 @@ interface Summary {
   total: number;
 }
 
-export default function CashPage() {
+export default function AdminCashPage() {
   const { ready, event, activeDay, me } = useApp();
   const dayParam = useDayParam();
   const [scope, setScope] = useState<"day" | "all">("day");
@@ -67,7 +68,9 @@ export default function CashPage() {
   const mine = data?.by_staff.find((s) => s.staff_id === me?.id);
 
   return (
-    <Page title="Cash">
+    <>
+      <AdminTitle title="Cash" subtitle="Cash taken at the desk, per staff member. Updates every 15 s." />
+      <div className="max-w-2xl space-y-7">
       {!event ? (
         <NeedEvent />
       ) : (
@@ -160,6 +163,7 @@ export default function CashPage() {
           </Sheet>
         </>
       )}
-    </Page>
+      </div>
+    </>
   );
 }

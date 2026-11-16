@@ -4,13 +4,18 @@ QR check-in for Cybertrace club events. Participants register through a Google F
 
 - **Stack:** Next.js 15 (App Router) + TypeScript + Tailwind, Postgres (`pg`), Nodemailer → Gmail SMTP, `qrcode`, `html5-qrcode`, Google Apps Script.
 - **Spec:** [`SPEC.md`](SPEC.md). Differences from the spec are listed at the end of this file.
+- **Hosting, stability and the event-day checklist:** [`HOSTING.md`](HOSTING.md).
+
+**Two interfaces.** HR members get the check-in app: **Scan**, **Search**, **Add Person** (name, email, phone), plus *My Check-ins* to undo a mistake. Admins also get the **admin dashboard** (`/admin`): Overview (today's seats, cash, emails, per-session table with a CSV per day), People (everyone and their check-ins), Cash, Emails (QR email template, sending queue, paste registrations), Members, Activity (audit log), Staff and Events.
 
 ```
 src/lib/checkin.ts      ← all scan / check-in logic (one module, ready for an offline queue in v2)
 src/lib/attendees.ts    ← form ingestion (idempotent), walk-ins, search, email fixes
-src/lib/email.ts        ← QR email (CID inline image), Gmail SMTP or DEV_EMAIL_MODE=log
+src/lib/email.ts        ← QR email template + single-sender queue, Gmail SMTP or DEV_EMAIL_MODE=log
 src/app/api/**          ← API routes (section 7 of the spec)
-src/app/{login,scan,search,walkin,recent,admin}  ← pages
+src/app/{login,scan,search,walkin,recent}  ← the HR app
+src/app/admin/**        ← the admin dashboard
+scripts/loadtest.ts     ← load test against the deployed app (HOSTING.md)
 migrations/*.sql        ← database schema
 apps-script/Code.gs     ← Google Form → API bridge with retry
 tests/*.test.ts         ← required tests (run against local Postgres)
@@ -65,7 +70,7 @@ curl -X POST http://localhost:3000/api/form-submit \
 
 ```bash
 docker compose up -d db
-npm test            # 56 tests, against the cybertrace_test database (recreated on each run)
+npm test            # 72 tests, against the cybertrace_test database (recreated on each run)
 npm run typecheck
 npm run build
 ```
@@ -119,7 +124,7 @@ Checklist:
 3. **Vercel.** Push this repo to GitHub, then go to <https://vercel.com/new> → import the repo. The framework is detected as Next.js; keep the defaults (`npm run build`).
 4. In **Settings → Environment Variables**, add `DATABASE_URL`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SESSION_SECRET` and `APP_BASE_URL` (optionally `DATABASE_SSL`, `PG_POOL_MAX`). Do **not** add `DEV_EMAIL_MODE`.
 5. Deploy. Open `https://<your-app>.vercel.app`, log in, create the event, then connect its form (section 4).
-6. **Region (recommended):** in Settings → Functions, set the region near your Supabase region (e.g. Frankfurt `fra1`), so each query doesn't cross the Atlantic.
+6. **Region:** `vercel.json` pins the functions to Frankfurt (`fra1`). Create Supabase in Frankfurt too, so each query stays in the same city. See [`HOSTING.md`](HOSTING.md) for why this matters and for the load test to run before each event.
 7. **On the phones:** open the URL in Safari (iPhone) → Share → *Add to Home Screen*, or in Chrome (Android) → ⋮ → *Install app / Add to Home screen*. Allow camera access the first time you open **Scan**.
 
 **Keeping Supabase awake.** Supabase's free tier pauses a project after about a week without activity, which is normal between club events. While it's paused, form submissions fail. They queue in the Apps Script and go through later, so nothing is lost, but emails are delayed. To prevent this, `vercel.json` defines a **Vercel cron job** that calls `GET /api/health` once a day (04:17 UTC). The endpoint reads from the `events` table, so the database sees real activity every day. Nothing to configure: Vercel picks it up on deploy (Project → Settings → Cron Jobs shows it). `https://<your-app>.vercel.app/api/health` is also a quick status check: `{"ok":true,"db":"up"}`, or HTTP 503 if the database is unreachable.
@@ -128,7 +133,7 @@ Checklist:
 
 **Volunteer guide.** `https://<your-app>.vercel.app/hr-guide.html` is a one-page quick guide for HR volunteers: logging in, what each result colour means, and what to do when something goes wrong. It's linked from the home screen and needs no login (it contains no secrets). Print it from a laptop browser (one A4 page), fill in the app address and the admin's name and phone, and leave a copy at each desk. The source is `public/hr-guide.html`.
 
-Before each event: Admin → Emails → make sure nothing is failed. The night before, open **Backup list (print / PDF)** and print it or "Save as PDF".
+Before each event, follow the checklist in [`HOSTING.md`](HOSTING.md): health check, load test, test email, nothing failed in Admin → Emails, backup list printed.
 
 ---
 
@@ -182,8 +187,16 @@ Example, the bootcamp: Session 1 *Free for everyone*; Sessions 2–4 *Members on
 - **Who counts as a member:** someone on the list whose membership hasn't expired, matched by **email**, or by **phone** (last 8 digits). If a person registered with a different email, HR can use Search → *Member? Find on List* to link them by hand.
 - **Membership lasts the academic year:** it ends on 31 August by default (you can change the date when importing). Joining at the desk makes someone a member until then, so every later day, including the competition, is free.
 - **At the door:** a non-member on a paid day gets a blue **Payment needed** screen (scanner, Search and Walk-in all work the same). HR takes the cash first, then taps **Paid 15 DT · Join the club** or **Paid 5 DT · Entry only**. The payment and the check-in are saved together, in one database transaction, under that staff member's name. If they don't pay, they aren't checked in.
-- **Cash** (home screen → Cash): what each staff member collected, today or for all days, and every payment. Only admins can cancel a payment entered by mistake (tap it). A membership bought with a cancelled payment is removed too. The check-in stays; undo it separately if needed.
+- **Cash** (Admin → Cash): what each staff member collected, today or for all days, and every payment. HR members see their own total for the day on their home screen. Only admins can cancel a payment entered by mistake (tap it). A membership bought with a cancelled payment is removed too. The check-in stays; undo it separately if needed.
 - **Exports:** the CSV adds `member_until` plus `paid` / `paid_to` columns per day; the backup list adds a *Member* column. The QR email explains each day's rule.
+
+## Seats, emails and exports
+
+- **Seats per day:** Admin → Events → (event) → Days → *Seats* (empty = no limit). Bootcamp: Session 1 → 80, Sessions 2–4 → 60, Competition → 120. The database enforces it (a trigger takes a seat per check-in and refuses when full), so no combination of phones can oversell. When a session is full the scanner shows **Session Full** before anyone pays. Undo frees the seat. The limit is on check-ins (people in the room), not on registrations: compare *Registered* with the seats on the Overview to decide when to close the Google Form.
+- **QR email template:** Admin → Emails. Plain text with placeholders `{{name}}`, `{{qr}}`, `{{code}}`, `{{event}}`, `{{dates}}`, `{{location}}`, `{{entry}}`. A live preview shows exactly what people receive; *Send Test Email* sends it to you. The QR and the backup code are always included, even if the template leaves them out. *Reset to Default* restores the built-in text.
+- **Sending:** every registration is queued and sent by one sender at a time over a single Gmail connection (Gmail blocks bursts). Temporary Gmail errors leave the email *waiting* and it's retried automatically (after each registration, and every 5 minutes by the form's script); after 5 failed tries it's marked *failed*. Admin → Emails shows both, with *Send Waiting Now* and *Retry Failed*.
+- **Paste registrations:** Admin → Emails → *Add registrations by pasting* (name, email, phone with a header row, e.g. from the Google Form's response sheet). Everyone with an email gets their QR. Pasting the same list again changes nothing.
+- **CSV per session:** Admin → Overview → *CSV* on each day's row: the people checked in that day, with time, staff member and payment. *Full CSV* has everyone and every day. CSV and the backup list are admin-only.
 
 ## Design
 
@@ -195,14 +208,14 @@ The interface follows Apple's dark-mode design language: the system font (SF Pro
 
 ## How things work (short reference)
 
-- **Check-in is atomic.** `/api/checkin` inserts into `checkins` inside a transaction. The partial unique index `one_checkin_per_day (attendee_id, event_day_id) WHERE undone_at IS NULL` makes Postgres reject a second active check-in, and a unique-violation becomes `ALREADY_CHECKED_IN` (with who and when). There is no select-then-insert.
+- **Check-in is atomic.** `/api/checkin` inserts into `checkins` in a single statement (with the seat count and audit entry). The partial unique index `one_checkin_per_day (attendee_id, event_day_id) WHERE undone_at IS NULL` makes Postgres reject a second active check-in, and a unique-violation becomes `ALREADY_CHECKED_IN` (with who and when). There is no select-then-insert.
 - **Today** = the event day whose date is today in **Africa/Tunis**. If there is none, the scanner says "No event day today". Admins can pick a day in the dropdown on Home / Scan (remembered on that phone for the rest of the day). HR can't.
 - **Duplicates:** the same `response_id` → nothing changes and no email is sent. The same email with a new response → details updated and the **same** QR re-sent.
-- **Walk-ins:** any staff member. Created and checked in for today in one transaction. If an email is given, the QR is emailed too (for day 2). If that email is already registered, nothing is created and the app points to the existing person.
+- **Walk-ins ("Add Person"):** any staff member; full name required, email and phone optional. Created and checked in for today in one transaction. If an email is given, the QR is emailed too (for day 2). If that email is already registered, nothing is created and the app points to the existing person.
 - **Undo:** HR can undo their own check-ins for 10 minutes (from *My recent*). Admins can undo any check-in.
 - **Login:** pick your name, then enter your PIN. 5 wrong PINs lock the account for 10 minutes. Attempts are reserved atomically, so parallel guessing can't get more than 5 tries. Admins can unlock an account or reset a PIN in Admin → Staff. The session is an httpOnly, SameSite=Lax, signed JWT cookie (12 h). It is `Secure` whenever the app runs on https.
-- **Emails** go out one at a time per server instance. Failures are stored (`email_status='failed'` + error). Admin → Emails → **Retry all failed**, or resend one person from Search.
-- **Audit log:** every write (login, failed login, check-in, rejected scan, undo, walk-in, resend, email edit, export, event/staff changes, form submissions) is stored with its `staff_id`. See Admin → Audit log.
+- **Emails** go through the single-sender queue (see *Seats, emails and exports*). Resend from Search sends right away.
+- **Audit log:** every write (login, failed login, check-in, rejected scan, undo, walk-in, resend, email edit, export, event/staff changes, form submissions) is stored with its `staff_id`. See Admin → Activity.
 
 ---
 
@@ -218,4 +231,5 @@ The interface follows Apple's dark-mode design language: the system font (SF Pro
 8. **Session cookie `Secure` flag** is dropped only when `APP_BASE_URL` starts with `http://` (local development over plain http). On Vercel it is always set.
 9. **Added `DEV_EMAIL_MODE`, `DEV_EMAIL_DIR`, `DATABASE_SSL`, `DATABASE_CA_CERT`, `PG_POOL_MAX`** environment variables.
 10. **Membership and paid entry** (not in the original spec; added for the bootcamp): `members` and `payments` tables, `event_days.access` / `entry_fee` and `events.membership_fee` columns (migration `002_membership_payments.sql`), routes `POST /api/checkin/pay`, `GET /api/events/:id/payments`, `POST /api/admin/payments/:id/void`, `/api/admin/members` (+ `/import`, `/:id`), `GET /api/members/search`, `POST /api/attendees/:id/member`, and a new scan result `PAYMENT_REQUIRED`. The QR code itself is unchanged: one code per person, once per day.
-11. **Service worker** (`public/sw.js`) is registered but does no caching. v1 is online-only by design, and the worker is the hook for the v2 offline queue.
+11. **Seats, two interfaces, email queue** (added for stability and the bootcamp): migrations `003` (seat limit, email template columns, email attempts, job leases) and `004` (seat counter + trigger); CSV, backup list and payments are **admin-only** (the spec let HR export); new admin routes `/api/admin/events/:id/{overview,people,import,email-preview,email-test}`, `/api/admin/emails/send`; `/api/events/:id/export.csv?day_id=` for one session; scan result `FULL`; the form-submit endpoint also accepts `{event_slug, ping: true}` (from the Apps Script trigger) to nudge the email queue.
+12. **Service worker** (`public/sw.js`) is registered but does no caching. v1 is online-only by design, and the worker is the hook for the v2 offline queue.

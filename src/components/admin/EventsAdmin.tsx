@@ -16,19 +16,34 @@ const ACCESS_OPTIONS: { value: DayAccess; label: string }[] = [
 function AccessEditor({
   access,
   fee,
+  seats,
   onAccess,
   onFee,
+  onSeats,
   id,
 }: {
   access: DayAccess;
   fee: string;
+  seats: string;
   onAccess: (a: DayAccess) => void;
   onFee: (f: string) => void;
+  onSeats: (s: string) => void;
   id: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 pb-2.5 pl-1">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pb-2.5 pl-1">
       <MenuSelect label="Entry rule" value={access} onChange={(v) => onAccess(v as DayAccess)} options={ACCESS_OPTIONS} />
+      <label htmlFor={`${id}-seats`} className="flex items-center gap-1 t-subhead text-label2">
+        Seats
+        <input
+          id={`${id}-seats`}
+          value={seats}
+          inputMode="numeric"
+          placeholder="∞"
+          onChange={(e) => onSeats(e.target.value.replace(/\D/g, ""))}
+          className="w-14 rounded-[8px] bg-fill px-2 py-1 text-right t-subhead text-label placeholder:text-label3 outline-none"
+        />
+      </label>
       {access === "members_or_fee" && (
         <label htmlFor={id} className="flex items-center gap-1 t-subhead text-label2">
           Fee
@@ -53,6 +68,7 @@ interface AdminDay {
   label: string | null;
   access: DayAccess;
   entry_fee: number;
+  capacity: number | null;
   checkins: number;
 }
 interface AdminEvent {
@@ -154,8 +170,8 @@ const autoSlug = (name: string) =>
 function CreateEvent({ onCancel, onCreated }: { onCancel: () => void; onCreated: (id: string) => Promise<void> }) {
   const [f, setF] = useState({ name: "", slug: "", location: "", membership_fee: "15" });
   const [slugTouched, setSlugTouched] = useState(false);
-  const [days, setDays] = useState<{ day_date: string; label: string; access: DayAccess; entry_fee: string }[]>([
-    { day_date: "", label: "Day 1", access: "free", entry_fee: "5" },
+  const [days, setDays] = useState<{ day_date: string; label: string; access: DayAccess; entry_fee: string; capacity: string }[]>([
+    { day_date: "", label: "Day 1", access: "free", entry_fee: "5", capacity: "" },
   ]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -213,7 +229,7 @@ function CreateEvent({ onCancel, onCreated }: { onCancel: () => void; onCreated:
         </FieldRow>
       </Section>
 
-      <Section header="Days" footer="Entry rule per day. Example bootcamp: sessions are Members only, the competition is Members free, others pay 5 DT.">
+      <Section header="Days" footer="Entry rule and seats per day. Example bootcamp: Session 1 free, 80 seats · Sessions 2–4 members only, 60 seats · Competition members free, others 5 DT, 120 seats. Leave seats empty for no limit.">
         {days.map((d, i) => (
           <div key={i} className="px-4">
           <div className="flex items-center gap-2">
@@ -241,15 +257,19 @@ function CreateEvent({ onCancel, onCreated }: { onCancel: () => void; onCreated:
             id={`ne-day-fee-${i}`}
             access={d.access}
             fee={d.entry_fee}
+            seats={d.capacity}
             onAccess={(a) => setDays((ds) => ds.map((x, j) => (j === i ? { ...x, access: a } : x)))}
             onFee={(v) => setDays((ds) => ds.map((x, j) => (j === i ? { ...x, entry_fee: v } : x)))}
+            onSeats={(v) => setDays((ds) => ds.map((x, j) => (j === i ? { ...x, capacity: v } : x)))}
           />
           </div>
         ))}
         <Row
           title="Add Day"
           accent
-          onClick={() => setDays((ds) => [...ds, { day_date: "", label: `Day ${ds.length + 1}`, access: ds[ds.length - 1]?.access ?? "free", entry_fee: "5" }])}
+          onClick={() =>
+            setDays((ds) => [...ds, { day_date: "", label: `Day ${ds.length + 1}`, access: ds[ds.length - 1]?.access ?? "free", entry_fee: "5", capacity: ds[ds.length - 1]?.capacity ?? "" }])
+          }
         />
       </Section>
 
@@ -368,7 +388,7 @@ function EventDetail({ ev, onBack, onChange }: { ev: AdminEvent; onBack: () => v
         />
       </Section>
 
-      <Section header="Days" footer="Each day has an entry rule. A day with check-ins can't be deleted.">
+      <Section header="Days" footer="Each day has an entry rule and a number of seats (empty = no limit). When a day is full, the scanner says so before anyone pays. A day with check-ins can't be deleted.">
         {ev.days.map((d) => (
           <DayRow key={d.id} eventId={ev.id} day={d} run={run} busy={busy} />
         ))}
@@ -477,7 +497,13 @@ function DayRow({
   const [date, setDate] = useState(day.day_date);
   const [access, setAccess] = useState<DayAccess>(day.access);
   const [fee, setFee] = useState(String(day.entry_fee));
-  const dirty = label !== (day.label ?? "") || date !== day.day_date || access !== day.access || Number(fee) !== Number(day.entry_fee);
+  const [seats, setSeats] = useState(day.capacity ? String(day.capacity) : "");
+  const dirty =
+    label !== (day.label ?? "") ||
+    date !== day.day_date ||
+    access !== day.access ||
+    Number(fee) !== Number(day.entry_fee) ||
+    (seats ? Number(seats) : null) !== day.capacity;
   return (
     <div className="px-4">
     <div className="flex items-center gap-2">
@@ -489,7 +515,7 @@ function DayRow({
           variant="tinted"
           disabled={busy}
           onClick={() =>
-            run(() => api(`/api/admin/events/${eventId}/days/${day.id}`, { method: "PATCH", body: { label, day_date: date, access, entry_fee: fee || 0 } }), "Day saved.")
+            run(() => api(`/api/admin/events/${eventId}/days/${day.id}`, { method: "PATCH", body: { label, day_date: date, access, entry_fee: fee || 0, capacity: seats || null } }), "Day saved.")
           }
         >
           Save
@@ -508,7 +534,7 @@ function DayRow({
         </button>
       )}
     </div>
-    <AccessEditor id={`day-fee-${day.id}`} access={access} fee={fee} onAccess={setAccess} onFee={setFee} />
+    <AccessEditor id={`day-fee-${day.id}`} access={access} fee={fee} seats={seats} onAccess={setAccess} onFee={setFee} onSeats={setSeats} />
     </div>
   );
 }

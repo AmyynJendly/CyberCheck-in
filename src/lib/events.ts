@@ -24,9 +24,10 @@ export interface DayRow {
   label: string | null;
   access: DayAccess;
   entry_fee: number;
+  capacity: number | null;
 }
 
-const DAY_COLS = "id, event_id, day_date, label, access, entry_fee";
+const DAY_COLS = "id, event_id, day_date, label, access, entry_fee, capacity";
 
 export function dayLabel(day: Pick<DayRow, "label" | "day_date">): string {
   return day.label?.trim() || day.day_date;

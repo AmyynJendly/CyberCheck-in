@@ -22,9 +22,11 @@ type WalkInResult =
     }
   | { status: "NO_EVENT_DAY" }
   | { status: "PAYMENT_REQUIRED"; name: string; day_label: string; options: PaymentOption[] }
+  | { status: "FULL"; name: string; day_label: string; capacity: number; checked_in: number }
   | { status: "EMAIL_EXISTS"; attendee_id: string; name: string };
 
-const EMPTY = { full_name: "", phone: "", email: "", class_year: "", team_name: "" };
+// The mini form: three fields, nothing else (speed at the door).
+const EMPTY = { full_name: "", email: "", phone: "" };
 
 export default function WalkInPage() {
   const { event, activeDay } = useApp();
@@ -71,7 +73,7 @@ export default function WalkInPage() {
   };
 
   return (
-    <Page title="Walk-in">
+    <Page title="Add Person">
       {!event ? (
         <NeedEvent />
       ) : (
@@ -108,6 +110,11 @@ export default function WalkInPage() {
             </Notice>
           )}
           {result?.status === "NO_EVENT_DAY" && <Notice tone="error">No event day today. Nobody was added.</Notice>}
+          {result?.status === "FULL" && (
+            <Notice tone="error">
+              <strong>{result.day_label} is full</strong> ({result.checked_in} / {result.capacity} seats). Nobody was added and nothing was charged.
+            </Notice>
+          )}
           {activeDay && activeDay.access !== "free" && !result && (
             <Notice tone="info">
               Today: {accessLabel(activeDay, event.membership_fee)}. Members on the club list (matched by email or phone) get in free.
@@ -116,26 +123,18 @@ export default function WalkInPage() {
           {error && <Notice tone="error">{error}</Notice>}
 
           <form onSubmit={submit} className="space-y-7">
-            <Section header="Required">
+            <Section footer="With an email, they also get their QR code for the next days.">
               <FieldRow label="Full name" htmlFor="wi-name">
                 <TextField id="wi-name" value={form.full_name} onChange={set("full_name")} required autoComplete="off" autoFocus placeholder="First and last name" />
               </FieldRow>
-            </Section>
-            <Section header="Optional" footer="With an email, they also get their QR code for the next days.">
-              <FieldRow label="Phone" htmlFor="wi-phone">
-                <TextField id="wi-phone" value={form.phone} onChange={set("phone")} inputMode="tel" autoComplete="off" placeholder="+216" />
-              </FieldRow>
               <FieldRow label="Email" htmlFor="wi-email">
-                <TextField id="wi-email" value={form.email} onChange={set("email")} type="email" autoCapitalize="off" autoComplete="off" placeholder="name@example.com" />
+                <TextField id="wi-email" value={form.email} onChange={set("email")} type="email" inputMode="email" autoCapitalize="off" autoComplete="off" placeholder="name@example.com" />
               </FieldRow>
-              <FieldRow label="Class / Year" htmlFor="wi-class">
-                <TextField id="wi-class" value={form.class_year} onChange={set("class_year")} autoComplete="off" placeholder="e.g. ING 2" />
-              </FieldRow>
-              <FieldRow label="Team" htmlFor="wi-team">
-                <TextField id="wi-team" value={form.team_name} onChange={set("team_name")} autoComplete="off" placeholder="Team name" />
+              <FieldRow label="Phone" htmlFor="wi-phone">
+                <TextField id="wi-phone" value={form.phone} onChange={set("phone")} type="tel" inputMode="tel" autoComplete="off" placeholder="+216" />
               </FieldRow>
             </Section>
-            <Button type="submit" size="large" className="w-full" disabled={busy || !activeDay || !form.full_name.trim()}>
+            <Button type="submit" size="large" className="h-[56px] w-full text-[18px]" disabled={busy || !activeDay || !form.full_name.trim()}>
               {busy ? "Adding…" : "Add & Check In"}
             </Button>
           </form>
