@@ -3,8 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  // pg / nodemailer / qrcode are Node-only; keep them out of the bundle.
-  serverExternalPackages: ["pg", "nodemailer", "qrcode", "bcryptjs"],
+  // pg / nodemailer / qrcode / exceljs are Node-only; keep them out of the bundle.
+  serverExternalPackages: ["pg", "nodemailer", "qrcode", "bcryptjs", "exceljs"],
   eslint: { ignoreDuringBuilds: true }, // type safety is enforced by `npm run typecheck`
   async headers() {
     return [

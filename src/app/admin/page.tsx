@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Download, Printer } from "lucide-react";
+import { Download, FileSpreadsheet, Printer } from "lucide-react";
 import { useApp } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
 import { AdminTitle } from "@/components/admin/AdminShell";
@@ -100,6 +100,9 @@ export default function AdminOverview() {
         subtitle={`${event.name}${t ? ` · today is ${t.label}` : " · no session today"} · updates every 10 s`}
         actions={
           <>
+            <a className={btn("filled")} href={`/api/events/${event.id}/report.xlsx`} title="One sheet per day with everyone who attended, plus a Statistics sheet">
+              <FileSpreadsheet className="h-4 w-4" aria-hidden /> Final Report
+            </a>
             <a className={btn("gray")} href={`/api/events/${event.id}/export.csv`}>
               <Download className="h-4 w-4" aria-hidden /> Full CSV
             </a>

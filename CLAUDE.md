@@ -10,6 +10,7 @@ Next.js 15 (App Router) + TypeScript + Tailwind v4 · Postgres via `pg` (Supabas
 - `src/lib/attendees.ts` — form ingestion (idempotent on response id, dedup on email), walk-ins ("Add Person"), search.
 - `src/lib/email.ts` — QR email template rendering + single-sender queue (DB lease) over one Gmail connection.
 - `src/lib/members.ts`, `payments.ts`, `stand.ts` — membership list, cash, registration-stand sheet import.
+- `src/lib/report.ts` — final Excel report (sheet per day + Statistics), admin-only; `src/lib/ticks.ts` — form ticks vs days.
 - `src/app/{login,scan,search,walkin,recent}` — HR app. `src/app/admin/**` — admin dashboard. `src/app/api/**` — routes.
 - `migrations/*.sql` — schema, applied in order by `npm run migrate`. Never edit an applied migration; add a new numbered file.
 
@@ -27,7 +28,7 @@ Session 1 free (80 seats) · Sessions 2–4 members only, join for 15 DT (60 sea
 ## Commands
 - `npm run dev` — local app on http://localhost:3000 (uses `.env.local`).
 - `npm run typecheck`, `npm run build` — must pass with zero errors before pushing.
-- `npm test` — 86 tests (the latency benchmark only runs with PERF=1). They DROP and recreate their database, so they only run against a LOCAL Postgres (`docker compose up -d db`); a guard refuses remote hosts.
+- `npm test` — 88 tests (the latency benchmark only runs with PERF=1). They DROP and recreate their database, so they only run against a LOCAL Postgres (`docker compose up -d db`); a guard refuses remote hosts.
 - `npm run migrate`, `npm run seed:admin -- --name "X" --pin 123456`.
 - `npm run loadtest -- --url … --slug load-test …` — load test against the deployed app (see HOSTING.md).
 - `npm run stresstest -- --url …` — stress test (ramp to 192 phones, bursts, races); creates and deletes its own TEST data in the shared DB.
