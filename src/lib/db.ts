@@ -1,4 +1,5 @@
 import pg from "pg";
+import { attachDatabasePool } from "@vercel/functions";
 import { requireEnv, optionalEnv } from "./env";
 
 // Return DATE columns as 'YYYY-MM-DD' strings instead of local-midnight Dates.
@@ -29,7 +30,9 @@ function buildConfig(): pg.PoolConfig {
     connectionString: url.toString(),
     ssl,
     max: Number(optionalEnv("PG_POOL_MAX") ?? 5),
-    idleTimeoutMillis: 10_000,
+    // Short: on Vercel every idle connection still counts against Supabase's
+    // pooler limit (200 clients on the free plan) until it is closed.
+    idleTimeoutMillis: 5_000,
     connectionTimeoutMillis: 10_000,
     // Safety net: no statement should ever take this long here.
     statement_timeout: 15_000,
@@ -41,9 +44,30 @@ export function getPool(): pg.Pool {
   if (!g.__ctPool) {
     const pool = new pg.Pool(buildConfig());
     pool.on("error", (err) => console.error("[db] idle client error", err));
+    // Vercel freezes idle instances with their connections still open; a burst
+    // of instances could then fill the pooler and lock everyone out. This keeps
+    // each instance alive just long enough to close its idle connections.
+    if (process.env.VERCEL) attachDatabasePool(pool);
     g.__ctPool = pool;
   }
   return g.__ctPool;
+}
+
+const POOLER_FULL = /EMAXCONN|max client connections|too many clients|remaining connection slots/i;
+
+/**
+ * The pooler refused a new connection ("full"). Nothing has run yet, so waiting
+ * a moment and trying again is safe: ~2.5 s in all, then the error goes through.
+ */
+async function retryWhenFull<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= 4 || !POOLER_FULL.test(String((err as Error)?.message))) throw err;
+      await new Promise((r) => setTimeout(r, 150 * 2 ** attempt + Math.random() * 150));
+    }
+  }
 }
 
 export async function closePool(): Promise<void> {
@@ -59,12 +83,13 @@ export function query<R extends pg.QueryResultRow = pg.QueryResultRow>(
   params: unknown[] = [],
   client?: Queryable,
 ): Promise<pg.QueryResult<R>> {
-  return (client ?? getPool()).query<R>(text, params);
+  if (client) return client.query<R>(text, params);
+  return retryWhenFull(() => getPool().query<R>(text, params));
 }
 
 /** Run `fn` inside BEGIN/COMMIT on one connection; ROLLBACK on any error. */
 export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-  const client = await getPool().connect();
+  const client = await retryWhenFull(() => getPool().connect());
   let broken: Error | undefined;
   try {
     await client.query("BEGIN");
