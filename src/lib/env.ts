@@ -39,6 +39,14 @@ export function sessionSecret(): Uint8Array {
   return new TextEncoder().encode(v);
 }
 
+/** Key for staff.pin_lookup. Must be the same everywhere that shares the database. */
+export function pinPepper(): string {
+  const v = raw("PIN_PEPPER");
+  if (!v || isPlaceholder(v)) throw new Error("Missing PIN_PEPPER (32+ random characters). See .env.example.");
+  if (v.length < 32) throw new Error("PIN_PEPPER must be at least 32 characters.");
+  return v;
+}
+
 export type EmailMode = "smtp" | "log";
 export function emailMode(): EmailMode {
   return raw("DEV_EMAIL_MODE")?.toLowerCase() === "log" ? "log" : "smtp";

@@ -1,7 +1,7 @@
 // Load test against a DEPLOYED app (run it before every event).
 //
 //   npm run loadtest -- --url https://your-app.vercel.app --slug load-test \
-//     --secret <FORM_SECRET of the load-test event> --staff "Amyyn" --pin 123456 \
+//     --secret <FORM_SECRET of the load-test event> --pin <a staff PIN> \
 //     [--people 150] [--scanners 8]
 //
 // Use a separate event (e.g. "Load test", slug load-test) whose only day is TODAY
@@ -19,7 +19,6 @@ const { values } = parseArgs({
     url: { type: "string" },
     slug: { type: "string" },
     secret: { type: "string" },
-    staff: { type: "string" },
     pin: { type: "string" },
     people: { type: "string", default: "150" },
     scanners: { type: "string", default: "8" },
@@ -37,7 +36,6 @@ function need(v: string | undefined, name: string): string {
 const BASE = need(values.url, "url").replace(/\/+$/, "");
 const SLUG = need(values.slug, "slug");
 const SECRET = need(values.secret, "secret");
-const STAFF = need(values.staff, "staff");
 const PIN = need(values.pin, "pin");
 const PEOPLE = Number(values.people);
 const SCANNERS = Number(values.scanners);
@@ -87,13 +85,10 @@ async function main() {
   if (!health.ok) throw new Error("The app or its database is not reachable. Fix that first.");
 
   // Log in.
-  const list = (await (await fetch(`${BASE}/api/staff/list`)).json()) as { staff: { id: string; name: string }[] };
-  const me = list.staff.find((s) => s.name.toLowerCase() === STAFF.toLowerCase());
-  if (!me) throw new Error(`No active staff named "${STAFF}".`);
   const login = await fetch(`${BASE}/api/auth/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ staff_id: me.id, pin: PIN }),
+    headers: { "Content-Type": "application/json", Origin: BASE },
+    body: JSON.stringify({ pin: PIN }),
   });
   if (!login.ok) throw new Error(`Login failed: HTTP ${login.status} ${await login.text()}`);
   const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];

@@ -10,9 +10,6 @@ interface StaffRow {
   name: string;
   role: "hr" | "admin";
   is_active: boolean;
-  failed_attempts: number;
-  locked_until: string | null;
-  is_locked: boolean;
 }
 
 type Msg = { tone: "ok" | "error"; text: string } | null;
@@ -57,15 +54,7 @@ export function StaffAdmin() {
     return run(() => api(`/api/admin/staff/${s.id}`, { method: "PATCH", body }), ok);
   };
 
-  const describe = (s: StaffRow) =>
-    [
-      s.role === "admin" ? "Admin" : "HR",
-      !s.is_active && "Deactivated",
-      s.is_locked && "Locked",
-      s.failed_attempts > 0 && `${s.failed_attempts} wrong PIN${s.failed_attempts > 1 ? "s" : ""}`,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+  const describe = (s: StaffRow) => [s.role === "admin" ? "Admin" : "HR", !s.is_active && "Deactivated"].filter(Boolean).join(" · ");
 
   return (
     <div className="space-y-7">
@@ -81,7 +70,7 @@ export function StaffAdmin() {
           }, "Added. Give them their PIN in person.");
         }}
       >
-        <Section header="Add Staff" footer="PINs are 6 digits. Share them in person, never in a group chat.">
+        <Section header="Add Staff" footer="The PIN is their login: 6 digits, different for everyone. Share it in person, never in a group chat.">
           <FieldRow label="Name" htmlFor="st-name">
             <TextField id="st-name" value={f.name} required placeholder="Full name" onChange={(e) => setF((s) => ({ ...s, name: e.target.value }))} />
           </FieldRow>
@@ -135,13 +124,17 @@ export function StaffAdmin() {
                   {s.id === me?.id && <span className="text-label2"> (you)</span>}
                 </span>
               }
-              subtitle={<span className={s.is_locked ? "text-sys-orange" : ""}>{describe(s)}</span>}
+              subtitle={describe(s)}
               chevron
               onClick={() => setSelected(s)}
             />
           ))}
         </Section>
       )}
+
+      <Section footer="After 5 wrong PINs a phone must wait 15 minutes (20 wrong PINs on the whole app: 1 hour). This lets everyone try again now.">
+        <Row title="Unblock Logins" onClick={() => void run(() => api("/api/admin/staff/unblock", { body: {} }), "Logins unblocked.")} />
+      </Section>
 
       <Sheet open={!!selected} onClose={() => setSelected(null)} title={selected?.name} message={selected ? describe(selected) : undefined}>
         {selected && (
@@ -155,7 +148,6 @@ export function StaffAdmin() {
             >
               Reset PIN
             </SheetAction>
-            {selected.is_locked && <SheetAction onClick={() => patch(selected, { unlock: true }, `${selected.name} unlocked.`)}>Unlock</SheetAction>}
             {selected.id !== me?.id && (
               <>
                 <SheetAction onClick={() => patch(selected, { role: selected.role === "admin" ? "hr" : "admin" }, "Role changed.")}>
@@ -173,7 +165,7 @@ export function StaffAdmin() {
         )}
       </Sheet>
 
-      <Sheet open={!!pinFor} onClose={() => setPinFor(null)} title={`New PIN for ${pinFor?.name}`} message="Their failed attempts and any lock are cleared.">
+      <Sheet open={!!pinFor} onClose={() => setPinFor(null)} title={`New PIN for ${pinFor?.name}`} message="Their old PIN stops working. The new one must be different from everyone else's.">
         <form
           className="border-t border-sep/60 px-4 py-3"
           onSubmit={(e) => {

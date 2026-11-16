@@ -29,6 +29,7 @@ export type AuditAction =
   | "reset_pin"
   | "deactivate_staff"
   | "activate_staff"
+  | "clear_login_blocks"
   | "payment"
   | "void_payment"
   | "import_members"

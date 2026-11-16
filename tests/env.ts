@@ -11,3 +11,4 @@ process.env.SESSION_SECRET = "test-secret-test-secret-test-secret-0123456789";
 process.env.APP_BASE_URL = "http://localhost:3000";
 process.env.GMAIL_USER = "cybertrace.issatso@gmail.com";
 process.env.GMAIL_APP_PASSWORD = "REPLACE_ME_GMAIL_APP_PASSWORD";
+process.env.PIN_PEPPER = "test-pin-pepper-test-pin-pepper-0123456789";

@@ -4,7 +4,7 @@ import { HttpError } from "./http";
 import { newFormSecret } from "./ids";
 import { isIsoDate } from "./time";
 import { cleanText } from "./validate";
-import { hashPin, isValidPin } from "./pin";
+import { hashPin, isValidPin, pinLookup } from "./pin";
 import type { Staff } from "./auth";
 import { DAY_ACCESS, type DayAccess } from "./events";
 
@@ -216,8 +216,7 @@ export async function deleteDay(staff: Staff, eventId: string, dayId: string) {
 
 export async function listStaff() {
   const r = await query(
-    `select id, name, role, is_active, failed_attempts, locked_until,
-            (locked_until is not null and locked_until > now()) as is_locked, created_at
+    `select id, name, role, is_active, created_at
        from staff order by is_active desc, lower(name)`,
   );
   return r.rows;
@@ -234,11 +233,34 @@ export async function createStaff(admin: Staff, body: Record<string, unknown>) {
   if (!isValidPin(body.pin)) throw new HttpError(400, "BAD_PIN_FORMAT", "PIN must be exactly 6 digits.");
   const role = body.role === undefined ? "hr" : cleanRole(body.role);
   const pinHash = await hashPin(body.pin);
-  return withTransaction(async (c) => {
-    const r = await c.query<{ id: string }>("insert into staff (name, pin_hash, role) values ($1, $2, $3) returning id", [name, pinHash, role]);
-    await audit({ staffId: admin.id, action: "create_staff", details: { staff_id: r.rows[0].id, name, role } }, c);
-    return { id: r.rows[0].id };
-  });
+  try {
+    return await withTransaction(async (c) => {
+      const r = await c.query<{ id: string }>("insert into staff (name, pin_hash, pin_lookup, role) values ($1, $2, $3, $4) returning id", [
+        name,
+        pinHash,
+        pinLookup(body.pin as string),
+        role,
+      ]);
+      await audit({ staffId: admin.id, action: "create_staff", details: { staff_id: r.rows[0].id, name, role } }, c);
+      return { id: r.rows[0].id };
+    });
+  } catch (err) {
+    throw pinTaken(err);
+  }
+}
+
+/** The PIN is the login, so it must be unique. */
+function pinTaken(err: unknown): unknown {
+  return isUniqueViolation(err, "staff_pin_lookup_key")
+    ? new HttpError(409, "PIN_TAKEN", "Someone else already has this PIN. Choose a different one.")
+    : err;
+}
+
+/** Clear every "too many wrong PINs" block (per phone and app-wide). */
+export async function clearLoginBlocks(admin: Staff) {
+  const r = await query("delete from login_throttle");
+  await audit({ staffId: admin.id, action: "clear_login_blocks", details: { cleared: r.rowCount } });
+  return { ok: true };
 }
 
 async function activeAdminCount(c: Queryable): Promise<number> {
@@ -283,19 +305,21 @@ export async function updateStaff(admin: Staff, id: string, body: Record<string,
     }
     if (pinHash) {
       set("pin_hash", pinHash);
-      sets.push("failed_attempts = 0", "locked_until = null");
+      set("pin_lookup", pinLookup(body.pin as string));
     }
-    if (body.unlock === true && !pinHash) sets.push("failed_attempts = 0", "locked_until = null");
     if (!sets.length) throw new HttpError(400, "BAD_REQUEST", "Nothing to update.");
 
-    await c.query(`update staff set ${sets.join(", ")} where id = $1`, params);
+    try {
+      await c.query(`update staff set ${sets.join(", ")} where id = $1`, params);
+    } catch (err) {
+      throw pinTaken(err);
+    }
     if ((await activeAdminCount(c)) < 1) throw new HttpError(400, "LAST_ADMIN", "There must be at least one active admin.");
 
     const details: Record<string, unknown> = { staff_id: id, name: s.name };
     if (body.name !== undefined) details.new_name = body.name;
     if (body.role !== undefined) details.role = body.role;
-    if (body.unlock === true) details.unlock = true;
-    if (body.name !== undefined || body.role !== undefined || body.unlock === true) {
+    if (body.name !== undefined || body.role !== undefined) {
       await audit({ staffId: admin.id, action: "update_staff", details }, c);
     }
     if (pinHash) await audit({ staffId: admin.id, action: "reset_pin", details: { staff_id: id, name: s.name } }, c);

@@ -44,6 +44,7 @@ const LABELS: Record<string, string> = {
   reset_pin: "Reset PIN",
   deactivate_staff: "Deactivated staff",
   activate_staff: "Reactivated staff",
+  clear_login_blocks: "Unblocked logins",
   payment: "Payment taken",
   void_payment: "Payment cancelled",
   import_members: "Imported members",

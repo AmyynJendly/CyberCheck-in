@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { query } from "@/lib/db";
-import { hashPin } from "@/lib/pin";
+import { hashPin, pinLookup } from "@/lib/pin";
 import { newFormSecret } from "@/lib/ids";
 import { signSession, SESSION_COOKIE } from "@/lib/session";
 import { tunisDate } from "@/lib/time";
@@ -35,14 +35,31 @@ export async function makeEvent(opts: { days?: number[]; active?: boolean; name?
 let pinHashCache: Promise<string> | undefined;
 export const TEST_PIN = "246810";
 
+/**
+ * Staff for tests that sign in with cookieFor(). Their PIN can't be used to log
+ * in (the lookup is a unique dummy, so they never collide); use makeStaffWithPin for that.
+ */
 export async function makeStaff(role: "hr" | "admin" = "hr", name = uniq("staff")): Promise<Staff> {
   pinHashCache ??= hashPin(TEST_PIN);
   const r = await query<Staff>(
-    "insert into staff (name, pin_hash, role) values ($1, $2, $3) returning id, name, role",
-    [name, await pinHashCache, role],
+    "insert into staff (name, pin_hash, pin_lookup, role) values ($1, $2, $3, $4) returning id, name, role",
+    [name, await pinHashCache, `dummy-${uniq()}`, role],
   );
   return r.rows[0];
 }
+
+/** Staff who can log in with `pin` (which must be unused). */
+export async function makeStaffWithPin(pin: string, role: "hr" | "admin" = "hr", name = uniq("staff")): Promise<Staff> {
+  const r = await query<Staff>(
+    "insert into staff (name, pin_hash, pin_lookup, role) values ($1, $2, $3, $4) returning id, name, role",
+    [name, await hashPin(pin), pinLookup(pin), role],
+  );
+  return r.rows[0];
+}
+
+/** A fresh 6-digit PIN no other test staff has. */
+let pinSeq = 0;
+export const freshPin = () => String(300000 + ((pinSeq++ * 7919) % 600000));
 
 export async function cookieFor(staff: Staff): Promise<string> {
   return `${SESSION_COOKIE}=${await signSession({ sid: staff.id, role: staff.role, name: staff.name })}`;

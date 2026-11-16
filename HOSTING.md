@@ -31,7 +31,7 @@ Things that typically make event sites crash, and that this setup avoids: free h
 
 ### 2. Vercel (app)
 1. <https://vercel.com/new> → import the GitHub repo. Plan: **Hobby** (free; fine for a student club, not for commercial use).
-2. Environment variables (Settings → Environment Variables): `DATABASE_URL` (transaction pooler, port 6543), `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SESSION_SECRET`, `APP_BASE_URL` (your `https://…vercel.app`), `PG_POOL_MAX=5`. Do **not** set `DEV_EMAIL_MODE`.
+2. Environment variables (Settings → Environment Variables): `DATABASE_URL` (transaction pooler, port 6543), `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SESSION_SECRET`, `PIN_PEPPER` (the same value as in your `.env.local`), `APP_BASE_URL` (your `https://…vercel.app`), `PG_POOL_MAX=5`. Do **not** set `DEV_EMAIL_MODE`.
 3. Deploy. Then check:
    - Settings → Functions → **Region shows Dublin (dub1)** (set by `vercel.json`, matching Supabase eu-west-1).
    - Settings → Cron Jobs shows `/api/health` daily.
@@ -58,7 +58,7 @@ If one day you outgrow the free tiers, the same code runs unchanged on Supabase 
 - [ ] `https://<app>/api/health` returns `{"ok":true,"db":"up"}` and the Supabase project is running (not paused).
 - [ ] Create a separate **Load test** event (slug `load-test`, one day = today, no seat limit) and run against the live site:
       ```bash
-      npm run loadtest -- --url https://<app>.vercel.app --slug load-test --secret <its FORM_SECRET> --staff "Amyyn" --pin <PIN> --people 150 --scanners 8
+      npm run loadtest -- --url https://<app>.vercel.app --slug load-test --secret <its FORM_SECRET> --pin <a staff PIN> --people 150 --scanners 8
       ```
       It should end with "✓ No errors". Then deactivate the Load test event.
 - [ ] Admin → Emails: send yourself a test email; check it arrives in the inbox (not spam) on Gmail and on a phone.
