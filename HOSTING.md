@@ -31,7 +31,7 @@ Things that typically make event sites crash, and that this setup avoids: free h
 
 ### 2. Vercel (app)
 1. <https://vercel.com/new> → import the GitHub repo. Plan: **Hobby** (free; fine for a student club, not for commercial use).
-2. Environment variables (Settings → Environment Variables): `DATABASE_URL` (transaction pooler, port 6543), `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SESSION_SECRET`, `PIN_PEPPER` (the same value as in your `.env.local`), `APP_BASE_URL` (your `https://…vercel.app`), `PG_POOL_MAX=5`. Do **not** set `DEV_EMAIL_MODE`.
+2. Environment variables (Settings → Environment Variables): `DATABASE_URL` (transaction pooler, port 6543), `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SESSION_SECRET`, `PIN_PEPPER` (the same value as in your `.env.local`), `APP_BASE_URL` (your `https://…vercel.app`), `PG_POOL_MAX=2`. Do **not** set `DEV_EMAIL_MODE`.
 3. Deploy. Then check:
    - Settings → Functions → **Region shows Dublin (dub1)** (set by `vercel.json`, matching Supabase eu-west-1).
    - Settings → Cron Jobs shows `/api/health` daily.
@@ -47,7 +47,7 @@ Other email services exist (Brevo, Resend, Mailgun) but they need your own domai
 | Service | Limit | Effect for you |
 |---|---|---|
 | Vercel Hobby | Functions run up to 60 s; 1 cron job per day | The app keeps every request well under that (email sending works in 40 s slices). |
-| Supabase Free | 500 MB database; ~200 pooled connections; pauses after ~7 idle days; no downloadable backups | One event uses well under 5 MB. Connections: 5 per server instance. Download the CSVs after each session (Admin → Overview), and optionally a full dump: `pg_dump "<session pooler URI>" > backup.sql`. |
+| Supabase Free | 500 MB database; ~200 pooled connections; pauses after ~7 idle days; no downloadable backups | One event uses well under 5 MB. Connections: 2 per server instance (`PG_POOL_MAX=2`), idle ones closed after 5 s (`attachDatabasePool`), and a refused connection is retried for ~2.5 s. Under heavy load Vercel runs many instances, so the 200-connection pooler limit is the ceiling: see *Stress test* below. Download the CSVs after each session (Admin → Overview), and optionally a full dump: `pg_dump "<session pooler URI>" > backup.sql`. |
 | Gmail | ~500 recipients per day | See above. The Emails page shows anything waiting or failed. |
 
 If one day you outgrow the free tiers, the same code runs unchanged on Supabase Pro / Vercel Pro.

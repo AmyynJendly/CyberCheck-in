@@ -30,6 +30,7 @@ Session 1 free (80 seats) · Sessions 2–4 members only, join for 15 DT (60 sea
 - `npm test` — 83 tests. They DROP and recreate their database, so they only run against a LOCAL Postgres (`docker compose up -d db`); a guard refuses remote hosts.
 - `npm run migrate`, `npm run seed:admin -- --name "X" --pin 123456`.
 - `npm run loadtest -- --url … --slug load-test …` — load test against the deployed app (see HOSTING.md).
+- `npm run stresstest -- --url …` — stress test (ramp to 192 phones, bursts, races); creates and deletes its own TEST data in the shared DB.
 
 ## Environment
 - Database: Supabase project in eu-west-1 (Ireland); Vercel functions pinned to `dub1` in `vercel.json` to match. Local dev and production share the same Supabase database: name test data "TEST…".

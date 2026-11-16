@@ -16,6 +16,7 @@ src/app/api/**          ← API routes (section 7 of the spec)
 src/app/{login,scan,search,walkin,recent}  ← the HR app
 src/app/admin/**        ← the admin dashboard
 scripts/loadtest.ts     ← load test against the deployed app (HOSTING.md)
+scripts/stresstest.ts   ← stress test: how far past event-day load the deployed app holds (HOSTING.md)
 migrations/*.sql        ← database schema
 apps-script/Code.gs     ← Google Form → API bridge with retry
 tests/*.test.ts         ← required tests (run against local Postgres)
@@ -92,7 +93,7 @@ Tests use `postgres://postgres:postgres@localhost:5432/cybertrace_test` by defau
 |---|---|---|
 | `DATABASE_URL` | **Yes** | Supabase → your project → **Connect** (top bar) → **Transaction pooler**. Copy the URI (port **6543**), e.g. `postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres`, and replace `[YOUR-PASSWORD]` with the database password. If you've forgotten the password, reset it under Project Settings → Database. If the password has special characters, URL-encode them. |
 | `DATABASE_SSL` | optional | Leave `no-verify` (default: encrypted, certificate not pinned). For full verification, download the CA from Supabase → Project Settings → Database → SSL, put the PEM in `DATABASE_CA_CERT`, and set `verify`. |
-| `PG_POOL_MAX` | optional | `5` is fine on Vercel. |
+| `PG_POOL_MAX` | optional | Connections per server instance. Use `2` on Vercel: Supabase's free pooler allows 200 connections in total, and Vercel runs many instances under load (see HOSTING.md). |
 | `GMAIL_USER` | already set | `cybertrace.issatso@gmail.com` |
 | `GMAIL_APP_PASSWORD` | **Yes** | Sign in to the club Gmail. Turn on **2-Step Verification** (Google Account → Security), then go to <https://myaccount.google.com/apppasswords>, create an app password named "Cybertrace check-in", and copy the 16 characters (spaces don't matter). This is not the normal Gmail password. |
 | `DEV_EMAIL_MODE` | **must be empty** | Leave it empty in production so real emails are sent. Use `log` only locally. |
