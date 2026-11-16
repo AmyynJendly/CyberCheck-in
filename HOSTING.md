@@ -76,6 +76,25 @@ If one day you outgrow the free tiers, the same code runs unchanged on Supabase 
 - [ ] If the network drops: tick people on the printed list with their code, and check them in with Search once you're back online (same day).
 - [ ] After the session: Admin → Overview → download that day's CSV.
 
+## Stress test
+
+`npm run stresstest -- --url https://<app>.vercel.app` pushes the live site far past event-day load (it creates and deletes its own TEST data; run it outside event hours). `--bursts-only` runs just the registration bursts.
+
+Results on 16 Nov 2026 (Vercel Hobby in Dublin, Supabase Free, `PG_POOL_MAX=2`). Phones here scan back to back with no pause between tickets; a real phone at the door does about one scan every 5 s, so 6 real phones are ~1–2 scans/s:
+
+| Test | Result |
+|---|---|
+| 3 / 6 / 12 / 24 / 48 phones nonstop | 0 errors; p95 0.15 / 0.15 / 0.15 / 0.25 / 0.44 s |
+| 96 phones nonstop (143 scans/s) | 0 errors; p95 0.9 s |
+| 192 phones nonstop (220 scans/s) | 0.2 % errors; p95 1.6 s |
+| Same ticket on 30 phones at once | exactly 1 OK, 29 "already checked in" |
+| 60 people at once for 20 seats | exactly 20 in, 40 "session full" |
+| ~12,000 check-ins | database matches what the phones were told; no duplicates |
+| 50 / 200 form posts at the same instant | 0 errors; p95 1.4 / 1.9 s |
+| Scanning right after the bursts | 0 errors |
+
+The ceiling is Supabase Free's pooler: 200 database connections in total. The app keeps 2 per server instance, closes idle ones after 5 s, and retries a refused connection for ~5 s. (Before these fixes, a 200-post burst filled the pooler and locked everyone out for ~4 minutes.)
+
 ## If something goes wrong
 - **Everything shows "No connection"**: it's the phone's network. Switch Wi-Fi ↔ mobile data.
 - **The app doesn't load at all**: open `/api/health`. If it says `"db":"down"`, check Supabase (paused? → Restore). Vercel's dashboard → Logs shows server errors.
