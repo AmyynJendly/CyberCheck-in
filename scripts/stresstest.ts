@@ -1,6 +1,6 @@
 // Stress test against the DEPLOYED app: how far past event-day load does it hold?
 //
-//   npm run stresstest -- --url https://your-app.vercel.app [--max 192] [--seconds 15]
+//   npm run stresstest -- --url https://your-app.vercel.app [--max 192] [--seconds 15] [--bursts-only]
 //
 // Needs DATABASE_URL (.env.local) for the same database the app uses: it creates
 // a temporary "TEST stress" event (days today + tomorrow), a temporary HR account
@@ -23,7 +23,12 @@ import { newFormSecret, newQrToken, newShortCode } from "../src/lib/ids";
 import { tunisDate } from "../src/lib/time";
 
 const { values } = parseArgs({
-  options: { url: { type: "string" }, max: { type: "string", default: "192" }, seconds: { type: "string", default: "15" } },
+  options: {
+    url: { type: "string" },
+    max: { type: "string", default: "192" },
+    seconds: { type: "string", default: "15" },
+    "bursts-only": { type: "boolean", default: false },
+  },
 });
 if (!values.url) {
   console.error("Missing --url. See the comment at the top of scripts/stresstest.ts.");
@@ -130,77 +135,82 @@ async function main() {
     if (!login.ok) throw new Error(`Login failed: HTTP ${login.status} ${await login.text()}`);
     const auth = { Cookie: (login.headers.get("set-cookie") ?? "").split(";")[0], "Content-Type": "application/json" };
 
-    // 1) Ramp.
-    console.log(`1. Ramp: phones scanning back to back for ${SECONDS} s per step (+ stats every 10 s per phone)`);
-    const tokens = await seedPeople(ev.id, 12_000, run);
+    const tokens = await seedPeople(ev.id, values["bursts-only"] ? 500 : 12_000, run);
     let next = 0;
-    let okTotal = 0;
-    const stages: number[] = [];
-    for (let c = 3; c <= MAX; c = c === 3 ? 6 : c * 2) stages.push(c);
-    let limit: string | null = null;
-    for (const phones of stages) {
-      const scans: Sample[] = [];
-      const polls: Sample[] = [];
-      const until = Date.now() + SECONDS * 1000;
-      await Promise.all(
-        Array.from({ length: phones }, async () => {
-          let nextPoll = Date.now() + Math.random() * 10_000;
-          while (Date.now() < until) {
-            if (Date.now() >= nextPoll) {
-              polls.push(await timed(`${BASE}/api/events/${ev.id}/stats`, { headers: auth }));
-              nextPoll += 10_000;
+    if (!values["bursts-only"]) {
+      // 1) Ramp.
+      console.log(`1. Ramp: phones scanning back to back for ${SECONDS} s per step (+ stats every 10 s per phone)`);
+      let okTotal = 0;
+      const stages: number[] = [];
+      for (let c = 3; c <= MAX; c = c === 3 ? 6 : c * 2) stages.push(c);
+      let limit: string | null = null;
+      for (const phones of stages) {
+        const scans: Sample[] = [];
+        const polls: Sample[] = [];
+        const until = Date.now() + SECONDS * 1000;
+        await Promise.all(
+          Array.from({ length: phones }, async () => {
+            let nextPoll = Date.now() + Math.random() * 10_000;
+            while (Date.now() < until) {
+              if (Date.now() >= nextPoll) {
+                polls.push(await timed(`${BASE}/api/events/${ev.id}/stats`, { headers: auth }));
+                nextPoll += 10_000;
+              }
+              const token = tokens[next++ % tokens.length];
+              const s = await timed(`${BASE}/api/checkin`, { method: "POST", headers: auth, body: JSON.stringify({ event_id: ev.id, token: `CT1:${token}` }) });
+              if (s.result === "OK") okTotal++;
+              scans.push(s);
             }
-            const token = tokens[next++ % tokens.length];
-            const s = await timed(`${BASE}/api/checkin`, { method: "POST", headers: auth, body: JSON.stringify({ event_id: ev.id, token: `CT1:${token}` }) });
-            if (s.result === "OK") okTotal++;
-            scans.push(s);
-          }
-        }),
-      );
-      const r = line(`${String(phones).padStart(3)} phones · scans`, scans, SECONDS);
-      if (polls.length) line(`${String(phones).padStart(3)} phones · stats`, polls);
-      if (r.errorRate > 0.05 || r.p95 > 3000) {
-        limit = `${phones} phones (errors ${(r.errorRate * 100).toFixed(1)} %, p95 ${r.p95.toFixed(0)} ms)`;
-        break;
+          }),
+        );
+        const r = line(`${String(phones).padStart(3)} phones · scans`, scans, SECONDS);
+        if (polls.length) line(`${String(phones).padStart(3)} phones · stats`, polls);
+        if (r.errorRate > 0.05 || r.p95 > 3000) {
+          limit = `${phones} phones (errors ${(r.errorRate * 100).toFixed(1)} %, p95 ${r.p95.toFixed(0)} ms)`;
+          break;
+        }
       }
+      console.log(limit ? `   → limit reached at ${limit}` : `   → no limit reached up to ${stages[stages.length - 1]} phones`);
+
+      // 2) Same ticket, 30 phones at once.
+      const [dup] = await seedPeople(ev.id, 1, `${run}-dup`);
+      const same = await Promise.all(
+        Array.from({ length: 30 }, () => timed(`${BASE}/api/checkin`, { method: "POST", headers: auth, body: JSON.stringify({ event_id: ev.id, token: `CT1:${dup}` }) })),
+      );
+      const sameOk = same.filter((s) => s.result === "OK").length;
+      const sameAlready = same.filter((s) => s.result === "ALREADY_CHECKED_IN").length;
+      console.log(`\n2. Same ticket on 30 phones at once: ${sameOk} OK, ${sameAlready} "already checked in" ${sameOk === 1 && sameAlready === 29 ? "✓" : "✗"}`);
+      if (sameOk === 1) okTotal++;
+
+      // 3) Seat race.
+      const seatTokens = await seedPeople(seats.id, 60, `${run}-seat`);
+      const race = await Promise.all(
+        seatTokens.map((t) => timed(`${BASE}/api/checkin`, { method: "POST", headers: auth, body: JSON.stringify({ event_id: seats.id, token: `CT1:${t}` }) })),
+      );
+      const raceOk = race.filter((s) => s.result === "OK").length;
+      const raceFull = race.filter((s) => s.result === "FULL").length;
+      console.log(`3. Seat race, 60 people for 20 seats: ${raceOk} in, ${raceFull} "session full" ${raceOk === 20 && raceFull === 40 ? "✓" : "✗"}`);
+
+      // 4) Integrity (before the bursts, which may briefly fill the database pooler).
+      const db = await query<{ checkins: number; seats_taken: number }>(
+        `select (select count(*)::int from checkins c join event_days d on d.id = c.event_day_id where d.event_id = $1 and c.undone_at is null) as checkins,
+                (select sum(seats_taken)::int from event_days where event_id = $1) as seats_taken`,
+        [ev.id],
+      );
+      const dupRows = await query<{ n: number }>(
+        `select count(*)::int as n from (select attendee_id, event_day_id from checkins where undone_at is null group by 1, 2 having count(*) > 1) x`,
+      );
+      const seatsDb = await query<{ n: number }>("select seats_taken as n from event_days where event_id = $1 and day_date = $2", [seats.id, tunisDate()]);
+      const okIntegrity = db.rows[0].checkins === okTotal && db.rows[0].seats_taken === okTotal && dupRows.rows[0].n === 0 && seatsDb.rows[0].n === 20;
+      console.log(
+        `4. Integrity: phones told OK ${okTotal} · check-ins in DB ${db.rows[0].checkins} · seat counter ${db.rows[0].seats_taken} · duplicate check-ins ${dupRows.rows[0].n} · seat-race counter ${seatsDb.rows[0].n} ${okIntegrity ? "✓" : "✗"}`,
+      );
+
     }
-    console.log(limit ? `   → limit reached at ${limit}` : `   → no limit reached up to ${stages[stages.length - 1]} phones`);
-
-    // 2) Same ticket, 30 phones at once.
-    const [dup] = await seedPeople(ev.id, 1, `${run}-dup`);
-    const same = await Promise.all(
-      Array.from({ length: 30 }, () => timed(`${BASE}/api/checkin`, { method: "POST", headers: auth, body: JSON.stringify({ event_id: ev.id, token: `CT1:${dup}` }) })),
-    );
-    const sameOk = same.filter((s) => s.result === "OK").length;
-    const sameAlready = same.filter((s) => s.result === "ALREADY_CHECKED_IN").length;
-    console.log(`\n2. Same ticket on 30 phones at once: ${sameOk} OK, ${sameAlready} "already checked in" ${sameOk === 1 && sameAlready === 29 ? "✓" : "✗"}`);
-    if (sameOk === 1) okTotal++;
-
-    // 3) Seat race.
-    const seatTokens = await seedPeople(seats.id, 60, `${run}-seat`);
-    const race = await Promise.all(
-      seatTokens.map((t) => timed(`${BASE}/api/checkin`, { method: "POST", headers: auth, body: JSON.stringify({ event_id: seats.id, token: `CT1:${t}` }) })),
-    );
-    const raceOk = race.filter((s) => s.result === "OK").length;
-    const raceFull = race.filter((s) => s.result === "FULL").length;
-    console.log(`3. Seat race, 60 people for 20 seats: ${raceOk} in, ${raceFull} "session full" ${raceOk === 20 && raceFull === 40 ? "✓" : "✗"}`);
-
-    // 4) Integrity (before the bursts, which may briefly fill the database pooler).
-    const db = await query<{ checkins: number; seats_taken: number }>(
-      `select (select count(*)::int from checkins c join event_days d on d.id = c.event_day_id where d.event_id = $1 and c.undone_at is null) as checkins,
-              (select sum(seats_taken)::int from event_days where event_id = $1) as seats_taken`,
-      [ev.id],
-    );
-    const dupRows = await query<{ n: number }>(
-      `select count(*)::int as n from (select attendee_id, event_day_id from checkins where undone_at is null group by 1, 2 having count(*) > 1) x`,
-    );
-    const seatsDb = await query<{ n: number }>("select seats_taken as n from event_days where event_id = $1 and day_date = $2", [seats.id, tunisDate()]);
-    const okIntegrity = db.rows[0].checkins === okTotal && db.rows[0].seats_taken === okTotal && dupRows.rows[0].n === 0 && seatsDb.rows[0].n === 20;
-    console.log(
-      `4. Integrity: phones told OK ${okTotal} · check-ins in DB ${db.rows[0].checkins} · seat counter ${db.rows[0].seats_taken} · duplicate check-ins ${dupRows.rows[0].n} · seat-race counter ${seatsDb.rows[0].n} ${okIntegrity ? "✓" : "✗"}`,
-    );
 
     // 5) Registration bursts: a busy form (50 at once), then an extreme one (200 at once).
+    // First let the ramp's connections close, so the bursts are measured on their own.
+    if (!values["bursts-only"]) await new Promise((r) => setTimeout(r, 60_000));
     console.log("\n5. Registration bursts (Google Form posts at the same instant)");
     let n = 0;
     for (const size of [50, 200]) {

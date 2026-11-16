@@ -57,14 +57,14 @@ const POOLER_FULL = /EMAXCONN|max client connections|too many clients|remaining 
 
 /**
  * The pooler refused a new connection ("full"). Nothing has run yet, so waiting
- * a moment and trying again is safe: ~2.5 s in all, then the error goes through.
+ * a moment and trying again is safe: ~5 s in all, then the error goes through.
  */
 async function retryWhenFull<T>(fn: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      if (attempt >= 4 || !POOLER_FULL.test(String((err as Error)?.message))) throw err;
+      if (attempt >= 5 || !POOLER_FULL.test(String((err as Error)?.message))) throw err;
       await new Promise((r) => setTimeout(r, 150 * 2 ** attempt + Math.random() * 150));
     }
   }
