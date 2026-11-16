@@ -117,7 +117,7 @@ Checklist:
 
 ## 3. Deploy to Vercel
 
-1. **Supabase.** Create a project at <https://supabase.com> (pick an EU region, close to Tunisia). Copy the Transaction pooler connection string (see the table above).
+1. **Supabase.** Create a project at <https://supabase.com> (region: West EU (Ireland), `eu-west-1`, to match the Vercel functions in Dublin). Copy the Transaction pooler connection string (see the table above).
 2. **Create the tables in Supabase** from your computer. Use the same pooler string, or the "Session pooler" string (port 5432), which is better for migrations:
    ```bash
    DATABASE_URL="postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres" npm run migrate
@@ -127,7 +127,7 @@ Checklist:
 3. **Vercel.** Push this repo to GitHub, then go to <https://vercel.com/new> → import the repo. The framework is detected as Next.js; keep the defaults (`npm run build`).
 4. In **Settings → Environment Variables**, add `DATABASE_URL`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SESSION_SECRET` and `APP_BASE_URL` (optionally `DATABASE_SSL`, `PG_POOL_MAX`). Do **not** add `DEV_EMAIL_MODE`.
 5. Deploy. Open `https://<your-app>.vercel.app`, log in, create the event, then connect its form (section 4).
-6. **Region:** `vercel.json` pins the functions to Frankfurt (`fra1`). Create Supabase in Frankfurt too, so each query stays in the same city. See [`HOSTING.md`](HOSTING.md) for why this matters and for the load test to run before each event.
+6. **Region:** `vercel.json` pins the functions to Dublin (`dub1`). Create Supabase in West EU (Ireland, `eu-west-1`) too, so each query stays in the same region. See [`HOSTING.md`](HOSTING.md) for why this matters and for the load test to run before each event.
 7. **On the phones:** open the URL in Safari (iPhone) → Share → *Add to Home Screen*, or in Chrome (Android) → ⋮ → *Install app / Add to Home screen*. Allow camera access the first time you open **Scan**.
 
 **Keeping Supabase awake.** Supabase's free tier pauses a project after about a week without activity, which is normal between club events. While it's paused, form submissions fail. They queue in the Apps Script and go through later, so nothing is lost, but emails are delayed. To prevent this, `vercel.json` defines a **Vercel cron job** that calls `GET /api/health` once a day (04:17 UTC). The endpoint reads from the `events` table, so the database sees real activity every day. Nothing to configure: Vercel picks it up on deploy (Project → Settings → Cron Jobs shows it). `https://<your-app>.vercel.app/api/health` is also a quick status check: `{"ok":true,"db":"up"}`, or HTTP 503 if the database is unreachable.

@@ -1,6 +1,6 @@
 # Hosting: fast, stable, free
 
-The short version: **Vercel (Hobby, free) in Frankfurt + Supabase (Free) in Frankfurt + the club Gmail.** Both servers sit next to each other, close to Tunisia. Every piece scales on its own, and the rules that must never break (one check-in per person per day, seat limits, no double payments) are enforced by the database itself, so they hold however many phones scan at once.
+The short version: **Vercel (Hobby, free) in Dublin + Supabase (Free) in Ireland (eu-west-1) + the club Gmail.** Both servers sit in the same region. Every piece scales on its own, and the rules that must never break (one check-in per person per day, seat limits, no double payments) are enforced by the database itself, so they hold however many phones scan at once.
 
 ## Why this setup holds up
 
@@ -21,11 +21,11 @@ Things that typically make event sites crash, and that this setup avoids: free h
 ## Setting it up
 
 ### 1. Supabase (database)
-1. <https://supabase.com> → New project. **Region: Central EU (Frankfurt)**. Plan: Free. Choose a strong database password and keep it.
+1. <https://supabase.com> → New project. **Region: West EU (Ireland), `eu-west-1`**. Plan: Free. Choose a strong database password and keep it.
 2. Project → **Connect** → **Transaction pooler** → copy the URI (port **6543**). Replace `[YOUR-PASSWORD]`. This is `DATABASE_URL`.
 3. From your computer, create the tables and the first admin (use the **Session pooler** URI, port 5432, for these two commands):
    ```bash
-   DATABASE_URL="postgresql://postgres.<ref>:<password>@aws-0-eu-central-1.pooler.supabase.com:5432/postgres" npm run migrate
+   DATABASE_URL="postgresql://postgres.<ref>:<password>@aws-0-eu-west-1.pooler.supabase.com:5432/postgres" npm run migrate
    DATABASE_URL="…same…" npm run seed:admin -- --name "Amyyn" --pin <your PIN>
    ```
 
