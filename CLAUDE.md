@@ -27,7 +27,7 @@ Session 1 free (80 seats) · Sessions 2–4 members only, join for 15 DT (60 sea
 ## Commands
 - `npm run dev` — local app on http://localhost:3000 (uses `.env.local`).
 - `npm run typecheck`, `npm run build` — must pass with zero errors before pushing.
-- `npm test` — 83 tests. They DROP and recreate their database, so they only run against a LOCAL Postgres (`docker compose up -d db`); a guard refuses remote hosts.
+- `npm test` — 86 tests (the latency benchmark only runs with PERF=1). They DROP and recreate their database, so they only run against a LOCAL Postgres (`docker compose up -d db`); a guard refuses remote hosts.
 - `npm run migrate`, `npm run seed:admin -- --name "X" --pin 123456`.
 - `npm run loadtest -- --url … --slug load-test …` — load test against the deployed app (see HOSTING.md).
 - `npm run stresstest -- --url …` — stress test (ramp to 192 phones, bursts, races); creates and deletes its own TEST data in the shared DB.

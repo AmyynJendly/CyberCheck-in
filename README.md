@@ -74,7 +74,7 @@ curl -X POST http://localhost:3000/api/form-submit \
 
 ```bash
 docker compose up -d db
-npm test            # 83 tests, against the cybertrace_test database (recreated on each run)
+npm test            # 86 tests (one latency benchmark runs only with PERF=1), against the cybertrace_test database (recreated on each run)
 npm run typecheck
 npm run build
 ```
