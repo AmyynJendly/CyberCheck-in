@@ -25,6 +25,9 @@ tests/*.test.ts         ← required tests (run against local Postgres)
 
 ## 1. Run locally
 
+> **No Docker?** You can point `DATABASE_URL` in `.env.local` at your Supabase project instead (see section 3) and skip `docker compose`. Everything works the same, except `npm test`: the tests delete and rebuild their database, so they refuse to run against anything but a local database.
+
+
 You need **Node 20.12+** (22 recommended) and **Docker**.
 
 ```bash
