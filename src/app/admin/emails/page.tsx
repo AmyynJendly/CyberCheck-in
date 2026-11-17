@@ -6,28 +6,10 @@ import { api, errorMessage } from "@/components/api";
 import { AdminTitle } from "@/components/admin/AdminShell";
 import { EmailsAdmin } from "@/components/admin/EmailsAdmin";
 import { Button, FieldRow, NeedEvent, Notice, Row, Section, TextField } from "@/components/ui";
-
-const DEFAULT_SUBJECT = "Your check-in QR code — {{event}}";
-const DEFAULT_BODY = `Hi {{name}},
-
-You're registered for {{event}}.
-{{dates}}
-{{location}}
-
-Show this QR code at the entrance:
-{{qr}}
-
-If the QR doesn't work, give this code at the desk: {{code}}
-
-{{entry}}
-
-Don't share this code. It works once per day.
-
-— Cybertrace Club`;
+import { DEFAULT_BODY, DEFAULT_SUBJECT } from "@/lib/email-defaults";
 
 const CHIPS: { key: string; hint: string }[] = [
   { key: "name", hint: "Their full name" },
-  { key: "qr", hint: "The QR code image" },
   { key: "code", hint: "6-character backup code" },
   { key: "event", hint: "Event name" },
   { key: "dates", hint: "When: day labels and dates" },
@@ -40,7 +22,8 @@ type Msg = { tone: "ok" | "error"; text: string } | null;
 function TemplateEditor({ eventId }: { eventId: string }) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [saved, setSaved] = useState({ subject: "", body: "" });
+  const [tagline, setTagline] = useState("");
+  const [saved, setSaved] = useState({ subject: "", body: "", tagline: "" });
   const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
   const [testTo, setTestTo] = useState("");
   const [msg, setMsg] = useState<Msg>(null);
@@ -49,23 +32,25 @@ function TemplateEditor({ eventId }: { eventId: string }) {
 
   useEffect(() => {
     (async () => {
-      const r = await api<{ events: { id: string; email_subject: string | null; email_body: string | null }[] }>("/api/admin/events");
+      const r = await api<{ events: { id: string; email_subject: string | null; email_body: string | null; email_tagline: string | null }[] }>("/api/admin/events");
       const e = r.events.find((x) => x.id === eventId);
       const s = e?.email_subject ?? DEFAULT_SUBJECT;
       const b = e?.email_body ?? DEFAULT_BODY;
+      const t = e?.email_tagline ?? "";
       setSubject(s);
       setBody(b);
-      setSaved({ subject: s, body: b });
+      setTagline(t);
+      setSaved({ subject: s, body: b, tagline: t });
     })().catch((e) => setMsg({ tone: "error", text: errorMessage(e) }));
   }, [eventId]);
 
   const refreshPreview = useCallback(async () => {
     try {
-      setPreview(await api(`/api/admin/events/${eventId}/email-preview`, { body: { subject, body } }));
+      setPreview(await api(`/api/admin/events/${eventId}/email-preview`, { body: { subject, body, tagline } }));
     } catch (e) {
       setMsg({ tone: "error", text: errorMessage(e) });
     }
-  }, [eventId, subject, body]);
+  }, [eventId, subject, body, tagline]);
 
   useEffect(() => {
     if (!body) return;
@@ -98,15 +83,21 @@ function TemplateEditor({ eventId }: { eventId: string }) {
     }
   };
 
-  const dirty = subject !== saved.subject || body !== saved.body;
+  const dirty = subject !== saved.subject || body !== saved.body || tagline !== saved.tagline;
 
   return (
     <section className="space-y-4">
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-4">
-          <Section header="QR email template" footer="Plain text. A blank line starts a new paragraph. Tap a placeholder to insert it where the cursor is.">
+          <Section
+            header="QR email template"
+            footer="The text appears under the greeting. A blank line starts a new paragraph; **like this** is bold. The QR code, backup code, session list and entry rules are always added below it. Tap a placeholder to insert it."
+          >
             <FieldRow label="Subject" htmlFor="tpl-subject">
               <TextField id="tpl-subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
+            </FieldRow>
+            <FieldRow label="Tagline" htmlFor="tpl-tagline">
+              <TextField id="tpl-tagline" value={tagline} placeholder="Line under the event name (optional)" onChange={(e) => setTagline(e.target.value)} />
             </FieldRow>
             <div className="px-4 py-3">
               <textarea
@@ -114,7 +105,7 @@ function TemplateEditor({ eventId }: { eventId: string }) {
                 aria-label="Email body"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                rows={16}
+                rows={8}
                 className="w-full resize-y rounded-[10px] bg-fill px-3 py-2 text-[15px] leading-6 text-label outline-none"
               />
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -138,8 +129,8 @@ function TemplateEditor({ eventId }: { eventId: string }) {
               disabled={busy || !dirty}
               onClick={() =>
                 run(async () => {
-                  await api(`/api/admin/events/${eventId}`, { method: "PATCH", body: { email_subject: subject, email_body: body } });
-                  setSaved({ subject, body });
+                  await api(`/api/admin/events/${eventId}`, { method: "PATCH", body: { email_subject: subject, email_body: body, email_tagline: tagline } });
+                  setSaved({ subject, body, tagline });
                   return "Template saved. New emails use it.";
                 })
               }
@@ -167,7 +158,7 @@ function TemplateEditor({ eventId }: { eventId: string }) {
               disabled={busy || !testTo.trim()}
               onClick={() =>
                 run(async () => {
-                  await api(`/api/admin/events/${eventId}/email-test`, { body: { to: testTo, subject, body }, timeoutMs: 30_000 });
+                  await api(`/api/admin/events/${eventId}/email-test`, { body: { to: testTo, subject, body, tagline }, timeoutMs: 30_000 });
                   return `Test sent to ${testTo}. Check the inbox (and spam).`;
                 })
               }

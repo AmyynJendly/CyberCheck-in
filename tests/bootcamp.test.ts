@@ -299,7 +299,8 @@ describe("QR email on paid events", () => {
     ]);
     const msg = buildQrEmail("x@example.com", { fullName: "X", eventName: "Bootcamp", location: null, days, shortCode: "ABCDEF", membershipFee: 15 }, Buffer.from(""));
     expect(msg.text).toContain("Entry:");
-    expect(msg.html).toContain("Competition: free for club members, 5 DT for everyone else.");
+    expect(msg.text).toContain("Competition: free for club members, 5 DT for everyone else.");
+    expect(msg.html).toContain("Members free · others 5 DT");
     expect(accessLines({ days: days.map((d) => ({ ...d, access: "free" })), membershipFee: 15 })).toEqual([]);
   });
 });

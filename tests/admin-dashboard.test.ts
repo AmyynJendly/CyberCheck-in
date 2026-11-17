@@ -92,7 +92,11 @@ describe("email template", () => {
     await drainEmailQueue();
     const real = devOutbox().find((m) => m.to === "real.tpl@example.com")!;
     expect(real.subject).toBe(`Ton QR pour ${ev.name}`);
-    expect(real.text).toMatch(/^Salut Real Person,/);
+    expect(real.text).toContain("Salut Real Person,");
+    // The secret inside the QR never appears in the email (only the 6-letter backup code does).
+    const tok = await query<{ qr_token: string }>("select qr_token from attendees where email = 'real.tpl@example.com'");
+    expect(real.html).not.toContain(tok.rows[0].qr_token);
+    expect(real.text).not.toContain(tok.rows[0].qr_token);
 
     await eventPATCH(req("PATCH", `/api/admin/events/${ev.id}`, { cookie: adminCookie, body: { email_subject: "", email_body: "" } }), params({ id: ev.id }));
     const r = await query<{ email_subject: string | null; email_body: string | null }>("select email_subject, email_body from events where id = $1", [ev.id]);

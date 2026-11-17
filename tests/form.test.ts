@@ -126,13 +126,14 @@ describe("email content", () => {
     await submit(ev, { response_id: "c1", full_name: "Mariem <b>", email });
     const [m] = outboxFor(email);
     const a = await query<{ qr_token: string; short_code: string }>("select qr_token, short_code from attendees where email = $1", [email]);
-    expect(m.subject).toBe(`Your check-in QR code — ${ev.name}`);
+    expect(m.subject).toBe(`Your official access pass — ${ev.name}`);
     expect(m.html).toContain('src="cid:qr"');
     expect(m.html).not.toContain("data:image");
     expect(m.html).toContain("Mariem &lt;b&gt;");
     expect(m.html).toContain(a.rows[0].short_code);
-    expect(m.text).toContain(`If the QR doesn't work, give this code at the desk: ${a.rows[0].short_code}`);
+    expect(m.text).toContain(`Backup code (if the QR doesn't work): ${a.rows[0].short_code}`);
     expect(m.text).toContain("Don't share this code. It works once per day.");
+    expect(m.html).toContain("Don&#39;t share this code. It works once per day.");
     expect(m.text).toContain("ISSAT Sousse");
     expect(m.png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
     expect(qrContent(a.rows[0].qr_token)).toMatch(/^CT1:[A-Z2-7]{26}$/);
