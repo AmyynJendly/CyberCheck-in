@@ -93,9 +93,10 @@ const shortDate = (day: string) =>
 /**
  * Render the email: the club's access-pass design (dark header, pass, QR,
  * checkpoint list, dark footer), with every style inline so Gmail and Outlook
- * show it as designed. The admin's text (plain text: blank lines separate
- * paragraphs, **bold**, {{placeholders}}) goes under the greeting. The QR, the
- * backup code, the checkpoints and the entry rules are always added.
+ * show it as designed. The admin's text goes at the top (plain text: blank lines
+ * separate paragraphs, "# " starts a headline, **bold**, {{placeholders}}). The
+ * pass holder's name, the QR, the backup code, the checkpoints and the entry
+ * rules are always added.
  */
 export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmail {
   const access = accessLines(ctx);
@@ -141,8 +142,8 @@ export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmai
 
   // Plain text, for mail apps that don't show HTML.
   const text = [
-    `Welcoming you to attend, ${ctx.fullName}!`,
-    ...paragraphs.map((p) => fill(p).replace(/\*\*(.+?)\*\*/g, "$1")),
+    ...paragraphs.map((p) => fill(p).replace(/^#\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1")),
+    `Pass holder: ${ctx.fullName}`,
     "[Your QR code is attached as qr.png] Show it at each session entrance.",
     `Backup code (if the QR doesn't work): ${ctx.shortCode}`,
     heading && [`${heading}:`, ...checkpoints.map((c) => `- ${c.label} · ${c.date} (${c.stage})`)].join("\n"),
@@ -193,9 +194,16 @@ ${ctx.tagline?.trim() ? `<div style="font-size:12px;color:#94a3b8;margin-top:6px
 
 <tr><td style="padding:26px 24px 16px;text-align:center">
 <div style="display:inline-block;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:5px 14px;border-radius:20px;letter-spacing:1px;text-transform:uppercase;margin:0 0 14px;border:1px solid #fde68a">Official Access Pass</div>
-<h2 style="font-size:20px;font-weight:700;color:#0f172a;margin:0 0 10px;line-height:1.35">Welcoming you to attend, <span style="font-family:${MONO};color:#1e3a8a;font-weight:800;letter-spacing:0.8px">${esc(ctx.fullName)}</span>!</h2>
-${paragraphs.map((p) => `<p style="font-size:14px;line-height:1.6;color:#475569;margin:0 auto 12px;max-width:440px">${para(p)}</p>`).join("\n")}
+${paragraphs
+  .map((p) =>
+    /^#\s+/.test(p)
+      ? `<h2 style="font-size:20px;font-weight:700;color:#0f172a;margin:0 0 10px;line-height:1.35">${para(p.replace(/^#\s+/, ""))}</h2>`
+      : `<p style="font-size:14px;line-height:1.6;color:#475569;margin:0 auto 12px;max-width:440px">${para(p)}</p>`,
+  )
+  .join("\n")}
 <div style="border-top:2px dashed #cbd5e1;margin:22px 0 20px;height:0;line-height:0;font-size:0">&nbsp;</div>
+<div style="font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin:0 0 4px">Pass holder</div>
+<div style="font-family:${MONO};font-size:19px;font-weight:800;color:#1e3a8a;letter-spacing:0.8px;margin:0 0 14px;line-height:1.3">${esc(ctx.fullName)}</div>
 <div style="display:inline-block;padding:12px;background:#ffffff;border:2px solid #e2e8f0;border-radius:14px;margin:0 0 12px"><img src="cid:qr" width="290" height="290" alt="Your QR access pass" style="display:block;width:290px;height:290px;border:0"></div>
 <div style="font-family:${MONO};font-size:12px;color:#64748b;margin:0 0 22px;letter-spacing:1px">BACKUP CODE: <b style="font-size:15px;color:#0f172a;letter-spacing:3px">${esc(ctx.shortCode)}</b></div>
 ${

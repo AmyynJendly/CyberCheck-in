@@ -91,7 +91,7 @@ function TemplateEditor({ eventId }: { eventId: string }) {
         <div className="space-y-4">
           <Section
             header="QR email template"
-            footer="The text appears under the greeting. A blank line starts a new paragraph; **like this** is bold. The QR code, backup code, session list and entry rules are always added below it. Tap a placeholder to insert it."
+            footer="The text at the top of the email. A blank line starts a new paragraph; a line starting with “# ” is a headline; **like this** is bold. The pass holder's name, QR code, backup code, session list and entry rules are always added below it. Tap a placeholder to insert it."
           >
             <FieldRow label="Subject" htmlFor="tpl-subject">
               <TextField id="tpl-subject" value={subject} onChange={(e) => setSubject(e.target.value)} />

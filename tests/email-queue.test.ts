@@ -99,7 +99,11 @@ describe("email template", () => {
     }, Buffer.from("png"));
     expect(m.html).toContain("tracers_camp &amp; CyberDay CTF");
     expect(m.html).toContain("♠ Alice in Borderland Edition ♦");
-    expect(m.html).toContain("Welcoming you to attend,");
+    expect(m.html).toContain(">Welcoming you to attend, Tracers-Camp</h2>"); // "# " headline in the default text
+    expect(m.html).toContain("Pass holder");
+    expect(m.html).toContain("Yasmine &lt;b&gt;");
+    expect(m.text).toContain("Pass holder: Yasmine <b>");
+    expect(m.text).not.toContain("# Welcoming");
     expect(m.html).toContain("<b>CyberTracer</b>"); // **bold** in the default text
     expect(m.html).toContain("BACKUP CODE:");
     expect(m.html).toContain("Event checkpoints (2 sessions + CyberDay CTF)");
@@ -112,8 +116,8 @@ describe("email template", () => {
     expect(m.html).toContain("Not a member? Join at the desk for");
     expect(m.text).toContain("CyberDay CTF: free for club members, 5 DT for everyone else.");
     expect(m.html).not.toContain("<style"); // inline styles only, for Gmail / Outlook
-    expect(m.html).not.toContain("cid:logo"); // no logo set
-    expect(m.logo).toBeNull();
+    expect(m.html).toContain('src="cid:logo"'); // the club logo, inline
+    expect(m.logo!.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a"); // a PNG
     expect(m.subject).toBe("Your official access pass — tracers_camp & CyberDay CTF");
     expect(m.text).toContain("- Networks under attack · Tue 24 Nov (Stage 2)");
     expect(m.text).toContain("- CyberDay CTF · Fri 27 Nov (Final Stage)");
