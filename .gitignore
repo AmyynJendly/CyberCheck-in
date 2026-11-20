@@ -23,3 +23,6 @@ skills-lock.json
 
 # QR decoder, copied from node_modules before dev/build
 public/zxing/
+
+# Registration exports (personal data): never commit
+data/
