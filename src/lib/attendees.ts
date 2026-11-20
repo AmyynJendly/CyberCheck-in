@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import { query, withTransaction, isUniqueViolation } from "./db";
-import { audit } from "./audit";
+import { audit, auditSafe } from "./audit";
 import { HttpError } from "./http";
 import { newQrToken, newShortCode } from "./ids";
 import { insertCheckin, insertPaymentTx, isDayFull, paymentOptions, type DoorChoice, type PaymentKind, type PaymentOption } from "./checkin";
@@ -206,9 +206,15 @@ export async function createWalkIn(opts: {
     const n = await query<{ n: number }>("select seats_taken as n from event_days where id = $1", [day.id]);
     return { status: "FULL" as const, name: fields.full_name, day_label: dayLabel(day), capacity: capacity ?? 0, checked_in: n.rows[0].n };
   };
+  // Logged so the admin sees how many were turned away (Overview).
+  const turnedAway = async () => {
+    const f = await full();
+    await auditSafe({ staffId: staff.id, action: "checkin_rejected", eventId, details: { reason: "FULL", event_day_id: day.id, walk_in: fields.full_name } });
+    return f;
+  };
   if (capacity) {
     const f = await full();
-    if (f.checked_in >= capacity) return f; // say so before asking for money
+    if (f.checked_in >= capacity) return turnedAway(); // say so before asking for money
   }
   const member = await findValidMembership({ email: fields.email, phone: fields.phone }, day.day_date);
   const access = { ok: day.access === "free" || !!member, memberId: member?.id ?? null };
@@ -272,7 +278,7 @@ export async function createWalkIn(opts: {
       };
     });
   } catch (err) {
-    if (isDayFull(err)) return full();
+    if (isDayFull(err)) return turnedAway();
     if (!(err instanceof EmailTaken)) throw err;
     const r = await query<{ id: string; full_name: string }>(
       "select id, full_name from attendees where event_id = $1 and email = $2",

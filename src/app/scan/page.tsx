@@ -24,6 +24,7 @@ type Result =
       is_member?: boolean;
       payment?: { kind: PaymentKind; amount: number } | null;
       claimed?: boolean;
+      over_limit?: boolean;
     }
   | {
       status: "PAYMENT_REQUIRED";
@@ -55,7 +56,11 @@ const DEBOUNCE_MS = 3000;
 function summarize(r: Result): Omit<RecentScan, "id" | "at"> {
   switch (r.status) {
     case "OK":
-      return { tone: "ok", title: r.name, detail: r.payment ? `Paid ${fmtDT(r.payment.amount)}` : r.claimed ? "Member (to check)" : r.is_member ? "Member" : "Checked in" };
+      return {
+        tone: "ok",
+        title: r.name,
+        detail: r.over_limit ? "Over the limit · stand" : r.payment ? `Paid ${fmtDT(r.payment.amount)}` : r.claimed ? "Member (to check)" : r.is_member ? "Member" : "Checked in",
+      };
     case "PAYMENT_REQUIRED":
       return { tone: "bad", title: r.name, detail: "Not paid" };
     case "ALREADY_CHECKED_IN":
@@ -253,6 +258,7 @@ export default function ScanPage() {
 
   const checkedIn = stats?.today ? stats.today.checked_in + localCount : null;
   const seatCap = stats?.today?.capacity ?? activeDay?.capacity ?? null;
+  const isFull = seatCap !== null && checkedIn !== null && checkedIn >= seatCap;
   const dismiss = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
     setResult(null);
@@ -356,6 +362,11 @@ export default function ScanPage() {
 
       {/* Bottom panel */}
       <div className="absolute inset-x-0 bottom-0 space-y-3 bg-gradient-to-t from-black/85 via-black/60 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-12">
+        {isFull && (
+          <p role="status" className="rounded-[14px] bg-sys-red px-4 py-2.5 text-center t-subhead font-semibold text-white">
+            Session full · only people who paid at the stand can still enter
+          </p>
+        )}
         {recent.length > 0 ? (
           <ul className="overflow-hidden rounded-[14px] bg-black/55 backdrop-blur-xl" aria-label="Last scans">
             {recent.map((r, i) => (
@@ -420,6 +431,7 @@ function ResultOverlay({ result, onClose }: { result: Result; onClose: () => voi
             : result.is_member
             ? `Member · ${result.day_label}`
             : result.day_label,
+        result.over_limit ? "Session full, but they paid at the stand: let them in." : "",
       ];
       break;
     case "ALREADY_CHECKED_IN":
@@ -432,7 +444,7 @@ function ResultOverlay({ result, onClose }: { result: Result; onClose: () => voi
     case "FULL":
       title = "Session Full";
       name = result.name;
-      lines = [`${result.checked_in} / ${result.capacity} seats taken`, "Not checked in. Nothing charged."];
+      lines = [`${result.checked_in} / ${result.capacity} seats taken`, "Not checked in. Nothing charged.", "The admin can open more seats: then scan again."];
       break;
     case "WRONG_EVENT":
       title = "Wrong Event";

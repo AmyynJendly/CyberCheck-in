@@ -15,7 +15,20 @@ export interface DayOverview {
   members_in: number;
   payments: number;
   cash: number;
+  /** Got in although the day was full (paid at the stand before the event). */
+  over_limit: number;
+  /** Turned away because the day was full, and not checked in since. */
+  turned_away: number;
+  /** Paid at the stand, not checked in yet on this day: they'll still get in when it's full. */
+  prepaid_waiting: number;
 }
+
+/** Paid at the registration stand (membership from the stand sheet, or a stand payment). SQL on attendee `a`. */
+const PREPAID = `(exists (select 1 from members m
+                   where m.source = 'stand' and m.valid_until >= d.day_date
+                     and (m.id = a.member_id or (a.email is not null and m.email = a.email)
+                          or (m.phone_key is not null and m.phone_key = right(regexp_replace(coalesce(a.phone, ''), '\\D', '', 'g'), 8))))
+                 or exists (select 1 from payments p where p.attendee_id = a.id and p.channel = 'stand' and p.voided_at is null))`;
 
 export async function getOverview(eventId: string) {
   const [days, perDay, totals, cash] = await Promise.all([
@@ -46,6 +59,27 @@ export async function getOverview(eventId: string) {
     ),
   ]);
   const review = await query<{ n: number }>("select count(*)::int as n from members where needs_review");
+  // Only days with a seat limit can be full.
+  const limited = days.filter((d) => d.capacity).map((d) => d.id);
+  const crowd = limited.length
+    ? await query<{ day_id: string; over_limit: number; turned_away: number; prepaid_waiting: number }>(
+        `select d.id as day_id,
+                (select count(*)::int from checkins c where c.event_day_id = d.id and c.undone_at is null and c.over_limit) as over_limit,
+                (select count(distinct coalesce(l.attendee_id::text, l.id::text))::int
+                   from audit_log l
+                  where l.event_id = $1 and l.action = 'checkin_rejected' and l.details->>'reason' = 'FULL'
+                    and l.details->>'event_day_id' = d.id::text
+                    and (l.attendee_id is null or not exists (select 1 from checkins c where c.attendee_id = l.attendee_id and c.event_day_id = d.id and c.undone_at is null))
+                ) as turned_away,
+                (select count(*)::int from attendees a
+                  where a.event_id = $1 and ${PREPAID}
+                    and not exists (select 1 from checkins c where c.attendee_id = a.id and c.event_day_id = d.id and c.undone_at is null)
+                ) as prepaid_waiting
+           from event_days d where d.id = any($2)`,
+        [eventId, limited],
+      )
+    : { rows: [] };
+  const crowdBy = new Map(crowd.rows.map((r) => [r.day_id, r]));
   const by = new Map(perDay.rows.map((r) => [r.event_day_id, r]));
   const cashBy = new Map(cash.rows.filter((r) => r.channel === "desk" && r.event_day_id).map((r) => [r.event_day_id!, r]));
   const stand = cash.rows.filter((r) => r.channel === "stand").reduce((s, r) => s + Number(r.cash), 0);
@@ -64,6 +98,9 @@ export async function getOverview(eventId: string) {
     members_in: by.get(d.id)?.members_in ?? 0,
     payments: cashBy.get(d.id)?.payments ?? 0,
     cash: Number(cashBy.get(d.id)?.cash ?? 0),
+    over_limit: crowdBy.get(d.id)?.over_limit ?? 0,
+    turned_away: crowdBy.get(d.id)?.turned_away ?? 0,
+    prepaid_waiting: crowdBy.get(d.id)?.prepaid_waiting ?? 0,
   }));
   return {
     today_date: today,

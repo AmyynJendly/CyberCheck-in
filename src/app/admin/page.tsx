@@ -21,6 +21,9 @@ interface DayRow {
   members_in: number;
   payments: number;
   cash: number;
+  over_limit: number;
+  turned_away: number;
+  prepaid_waiting: number;
 }
 interface Overview {
   event: { id: string; name: string; location: string | null; membership_fee: number };
@@ -34,6 +37,61 @@ interface Overview {
   stand_total: number;
   members_to_review: number;
   days: DayRow[];
+}
+
+/** A day that reached its seat limit: who is still coming, and quick buttons to open more seats. */
+function FullDayAlert({ eventId, day, onChanged }: { eventId: string; day: DayRow; onChanged: () => void }) {
+  const [custom, setCustom] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const raise = async (more: number) => {
+    if (!day.capacity || !(more > 0)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/admin/events/${eventId}/days/${day.id}`, { method: "PATCH", body: { capacity: day.capacity + more } });
+      setCustom("");
+      onChanged();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="rounded-[14px] border border-sys-red/40 bg-sys-red/10 p-4" role="alert">
+      <p className="t-headline text-sys-red">
+        {day.label} is full ({day.checked_in}/{day.capacity})
+      </p>
+      <p className="t-subhead mt-1 text-label">
+        {day.turned_away > 0 ? `${day.turned_away} ${day.turned_away === 1 ? "person was" : "people were"} turned away. ` : ""}
+        {day.prepaid_waiting > 0
+          ? `${day.prepaid_waiting} who paid at the stand haven't arrived yet: they will still get in.`
+          : "Everyone who paid at the stand is in."}
+        {day.over_limit > 0 ? ` ${day.over_limit} already got in over the limit.` : ""}
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="t-subhead text-label2">Open more seats:</span>
+        {[5, 10].map((n) => (
+          <button key={n} type="button" className={btn("filled")} disabled={busy} onClick={() => void raise(n)}>
+            +{n}
+          </button>
+        ))}
+        <input
+          aria-label="Number of seats to add"
+          inputMode="numeric"
+          value={custom}
+          onChange={(e) => setCustom(e.target.value.replace(/\D/g, ""))}
+          placeholder="+…"
+          className="h-9 w-16 rounded-[8px] bg-fill px-2 text-center t-body outline-none"
+        />
+        <button type="button" className={btn("gray")} disabled={busy || !custom} onClick={() => void raise(Number(custom))}>
+          Add
+        </button>
+      </div>
+      {error && <p className="t-footnote mt-2 text-sys-red">{error}</p>}
+    </div>
+  );
 }
 
 function Meter({ value, max }: { value: number; max: number | null }) {
@@ -114,6 +172,14 @@ export default function AdminOverview() {
       />
       {error && <Notice tone="error">{error}</Notice>}
       {!data && !error && <Spinner />}
+      {data &&
+        data.days
+          .filter((d) => d.capacity && d.checked_in >= d.capacity && d.day_date >= data.today_date)
+          .map((d) => (
+            <div key={d.id} className="mb-6">
+              <FullDayAlert eventId={data.event.id} day={d} onChanged={() => void load()} />
+            </div>
+          ))}
       {data && data.members_to_review > 0 && (
         <div className="mb-6">
           <Notice tone="warn">

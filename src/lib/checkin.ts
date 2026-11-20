@@ -51,6 +51,8 @@ export type ScanResult =
       payment: { kind: PaymentKind; amount: number } | null;
       /** Admitted as "already a member" without paying; waiting for admin review. */
       claimed?: boolean;
+      /** The day was full, but they paid at the stand before the event, so they got in anyway. */
+      over_limit?: boolean;
     }
   | {
       status: "ALREADY_CHECKED_IN";
@@ -96,6 +98,7 @@ interface ScanContext {
   existing: { id: string; checked_at: string; by_staff_name: string } | null;
   member_id: string | null; // a membership valid on the day (linked, or matched by email/phone)
   paid_entry: boolean;
+  prepaid: boolean; // paid at the registration stand before the event: keeps their seat on a full day
 }
 
 /** Everything a scan needs, in ONE query. */
@@ -130,7 +133,14 @@ async function loadContext(eventId: string, who: { token?: string; attendeeId?: 
          order by (m.id = att.member_id) desc nulls last
          limit 1) as member_id,
        exists (select 1 from payments p, att, day
-                where p.attendee_id = att.id and p.event_day_id = day.id and p.kind = 'entry' and p.voided_at is null) as paid_entry`,
+                where p.attendee_id = att.id and p.event_day_id = day.id and p.kind = 'entry' and p.voided_at is null) as paid_entry,
+       (exists (select 1 from members m, att, day
+                 where m.source = 'stand' and m.valid_until >= day.day_date
+                   and (m.id = att.member_id
+                        or (att.email is not null and m.email = att.email)
+                        or (m.phone_key is not null and m.phone_key = right(regexp_replace(coalesce(att.phone, ''), '\\D', '', 'g'), 8))))
+        or exists (select 1 from payments p, att
+                    where p.attendee_id = att.id and p.channel = 'stand' and p.voided_at is null)) as prepaid`,
     [eventId, dayId, today, who.token ?? null, who.attendeeId ?? null],
   );
   return r.rows[0];
@@ -166,17 +176,18 @@ export function isDayFull(err: unknown): boolean {
  */
 export async function insertCheckin(
   client: Queryable | undefined,
-  args: { attendeeId: string; eventId: string; day: DayRow; staff: Staff; method: CheckinMethod; linkMemberId?: string | null },
-): Promise<{ id: string; checked_at: string }> {
+  args: { attendeeId: string; eventId: string; day: DayRow; staff: Staff; method: CheckinMethod; linkMemberId?: string | null; allowOverLimit?: boolean },
+): Promise<{ id: string; checked_at: string; over_limit: boolean }> {
   const action = args.method === "qr" ? "checkin" : args.method === "manual" ? "manual_checkin" : "walk_in";
-  const r = await query<{ id: string | null; checked_at: string | null }>(
+  // allowOverLimit: paid at the stand, so the seat trigger lets them in on a full day (and records it).
+  const r = await query<{ id: string | null; checked_at: string | null; over_limit: boolean | null }>(
     `with ins as (
-       insert into checkins (attendee_id, event_day_id, staff_id, method)
-       values ($1, $2, $3, $4)
-       returning id, checked_at
+       insert into checkins (attendee_id, event_day_id, staff_id, method, over_limit)
+       values ($1, $2, $3, $4, $9)
+       returning id, checked_at, over_limit
      ), aud as (
        insert into audit_log (staff_id, action, event_id, attendee_id, details)
-       select $3, $5, $6, $1, jsonb_build_object('checkin_id', ins.id, 'event_day_id', $2::uuid, 'day', $7::text, 'method', $4::text)
+       select $3, $5, $6, $1, jsonb_build_object('checkin_id', ins.id, 'event_day_id', $2::uuid, 'day', $7::text, 'method', $4::text, 'over_limit', ins.over_limit)
          from ins
        returning 1
      ), lnk as (
@@ -184,12 +195,12 @@ export async function insertCheckin(
         where id = $1 and $8::uuid is not null and member_id is distinct from $8::uuid and exists (select 1 from ins)
        returning 1
      )
-     select (select id from ins) as id, (select checked_at from ins) as checked_at`,
-    [args.attendeeId, args.day.id, args.staff.id, args.method, action, args.eventId, args.day.day_date, args.linkMemberId ?? null],
+     select (select id from ins) as id, (select checked_at from ins) as checked_at, (select over_limit from ins) as over_limit`,
+    [args.attendeeId, args.day.id, args.staff.id, args.method, action, args.eventId, args.day.day_date, args.linkMemberId ?? null, !!args.allowOverLimit],
     client,
   );
   const row = r.rows[0];
-  return { id: row.id!, checked_at: row.checked_at! };
+  return { id: row.id!, checked_at: row.checked_at!, over_limit: !!row.over_limit };
 }
 
 /** Insert a cash payment (and its audit entry) in the caller's transaction. */
@@ -250,12 +261,12 @@ async function reject(staff: Staff, eventId: string, reason: string, extra: Reco
  * duplicate gets ALREADY_CHECKED_IN and nothing — no payment — is written.
  */
 async function commit(
-  ctx: { attendee: AttendeeLite; day: ContextDay; staff: Staff; method: CheckinMethod; memberId: string | null },
+  ctx: { attendee: AttendeeLite; day: ContextDay; staff: Staff; method: CheckinMethod; memberId: string | null; prepaid: boolean },
   paid: PaymentOption | null,
   claim = false,
 ): Promise<ScanResult> {
   const { attendee, day, staff, method } = ctx;
-  const ok = (row: { id: string; checked_at: string }, isMember: boolean): ScanResult => ({
+  const ok = (row: { id: string; checked_at: string; over_limit: boolean }, isMember: boolean): ScanResult => ({
     status: "OK",
     checkin_id: row.id,
     attendee_id: attendee.id,
@@ -267,12 +278,21 @@ async function commit(
     is_member: isMember,
     payment: paid ? { kind: paid.kind, amount: paid.amount } : null,
     ...(claim ? { claimed: true } : {}),
+    ...(row.over_limit ? { over_limit: true } : {}),
   });
 
   try {
     if (!paid && !claim) {
       // Fast path: one atomic statement, no explicit transaction.
-      const row = await insertCheckin(undefined, { attendeeId: attendee.id, eventId: attendee.event_id, day, staff, method, linkMemberId: ctx.memberId });
+      const row = await insertCheckin(undefined, {
+        attendeeId: attendee.id,
+        eventId: attendee.event_id,
+        day,
+        staff,
+        method,
+        linkMemberId: ctx.memberId,
+        allowOverLimit: ctx.prepaid,
+      });
       return ok(row, !!ctx.memberId);
     }
     const result = await withTransaction(async (c) => {
@@ -351,13 +371,14 @@ async function admit(
     return alreadyResult(attendee, day, ctx.existing);
   }
   // Full? Say so before asking anyone for money. (Re-checked under a lock when writing.)
-  if (day.capacity && day.checked_in >= day.capacity) {
+  // People who paid at the stand before the event still get in (over the limit).
+  if (day.capacity && day.checked_in >= day.capacity && !ctx.prepaid) {
     await reject(opts.staff, opts.eventId, "FULL", { event_day_id: day.id, capacity: day.capacity }, attendee.id);
     return fullResult(attendee, day, day.checked_in);
   }
 
   const freeAccess = day.access === "free" || !!ctx.member_id || (day.access === "members_or_fee" && ctx.paid_entry);
-  const base = { attendee, day, staff: opts.staff, method, memberId: ctx.member_id };
+  const base = { attendee, day, staff: opts.staff, method, memberId: ctx.member_id, prepaid: ctx.prepaid };
   if (freeAccess) return commit(base, null);
 
   const options = paymentOptions(day, ctx.event.membership_fee);

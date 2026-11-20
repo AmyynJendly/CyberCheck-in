@@ -113,6 +113,11 @@ export default function Home() {
             )}
 
             {!activeDay && me?.role !== "admin" && <Notice tone="warn">Today isn&apos;t a session day, so check-in is off.</Notice>}
+            {activeDay && left === 0 && (
+              <Notice tone="error">
+                <strong>Session full.</strong> Only people who paid at the stand can still enter. The admin can open more seats.
+              </Notice>
+            )}
 
             <Link href="/scan" className={`${btn("filled", "large")} h-[64px] w-full text-[19px]`}>
               <ScanLine className="h-6 w-6" strokeWidth={2.4} aria-hidden />
