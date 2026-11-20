@@ -19,6 +19,7 @@ import { prettyDate } from "./time";
 import { looksLikeEmail } from "./validate";
 import { DEFAULT_BODY, DEFAULT_SUBJECT } from "./email-defaults";
 import { EMAIL_LOGO_PNG_BASE64 } from "./email-logo";
+import { DEFAULT_DESIGN, EMAIL_DESIGNS, esc, renderEmail, type Block, type Checkpoint, type EmailDesign } from "./email-designs";
 
 export interface QrEmail {
   to: string;
@@ -40,6 +41,8 @@ export interface EmailContext {
   membershipFee?: number;
   /** Line under the event name in the header (Admin → Emails), e.g. the edition theme. */
   tagline?: string | null;
+  /** "borderland" (default) or "classic" — see email-designs.ts. */
+  design?: string | null;
   /** Custom template from Admin → Emails; null/empty = the defaults in email-defaults.ts. */
   subjectTemplate?: string | null;
   bodyTemplate?: string | null;
@@ -72,31 +75,21 @@ export function accessLines(ctx: Pick<EmailContext, "days" | "membershipFee">): 
 
 export { DEFAULT_BODY, DEFAULT_SUBJECT, PLACEHOLDERS } from "./email-defaults";
 
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
-
-const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const MONO = "Consolas,'Courier New','SF Mono',Monaco,monospace";
-// The sessions are "stages" with card suits; the last day is the joker (final stage).
-const SUITS = [
-  ["♠", "#0284c7"],
-  ["♦", "#d97706"],
-  ["♣", "#16a34a"],
-  ["♥", "#dc2626"],
-] as const;
+// The sessions are "stages", each a card suit; the last day is the Joker (final stage).
+const SUITS = ["♠", "♦", "♣", "♥"] as const;
 // A forwarded ticket lets someone else in: always say so.
 const KEEP_PRIVATE = "Don't share this code. It works once per day.";
 const shortDate = (day: string) =>
   new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short" }).format(new Date(`${day}T12:00:00Z`));
 
 /**
- * Render the email: the club's access-pass design (dark header, pass, QR,
- * checkpoint list, dark footer), with every style inline so Gmail and Outlook
- * show it as designed. The admin's text goes at the top (plain text: blank lines
- * separate paragraphs, "# " starts a headline, **bold**, {{placeholders}}). The
- * pass holder's name, the QR, the backup code, the checkpoints and the entry
- * rules are always added.
+ * Render the email in the event's design (src/lib/email-designs.ts), every style
+ * inline so Gmail and Outlook show it as designed. The admin's text is plain
+ * text: blank lines separate paragraphs, "# " starts a headline, **bold**,
+ * {{placeholders}}; text after a "---" line goes below the session list (notes).
+ * The player's name, the QR, the backup code, the sessions and the entry rules
+ * are always added.
  */
 export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmail {
   const access = accessLines(ctx);
@@ -113,41 +106,45 @@ export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmai
   const subject = fill(ctx.subjectTemplate?.trim() || DEFAULT_SUBJECT).replace(/\s+/g, " ").trim();
 
   // The admin's text: paragraphs, minus what the layout always shows (the QR) and empty placeholders.
-  const paragraphs = (ctx.bodyTemplate?.trim() || DEFAULT_BODY)
-    .replace(/\r\n/g, "\n")
-    .replace(/\{\{\s*qr\s*\}\}/g, "")
-    .split(/\n{2,}/)
-    .map((p) =>
-      p
-        .split("\n")
-        .filter((line) => !/^\s*\{\{\s*(dates|location|entry)\s*\}\}\s*$/.test(line) || values[line.replace(/[{}\s]/g, "")])
-        .join("\n")
-        .trim(),
-    )
-    .filter(Boolean);
+  const toParagraphs = (s: string) =>
+    s
+      .replace(/\{\{\s*qr\s*\}\}/g, "")
+      .split(/\n{2,}/)
+      .map((p) =>
+        p
+          .split("\n")
+          .filter((line) => !/^\s*\{\{\s*(dates|location|entry)\s*\}\}\s*$/.test(line) || values[line.replace(/[{}\s]/g, "")])
+          .join("\n")
+          .trim(),
+      )
+      .filter(Boolean);
+  const [topText, ...noteParts] = (ctx.bodyTemplate?.trim() || DEFAULT_BODY).replace(/\r\n/g, "\n").split(/^\s*-{3,}\s*$/m);
+  const top = toParagraphs(topText);
+  const notes = toParagraphs(noteParts.join("\n\n"));
 
   const final = ctx.days.length > 1 ? ctx.days.length - 1 : -1;
-  const checkpoints = ctx.days.map((d, i) => ({
-    icon: i === final ? "🃏" : SUITS[i % SUITS.length][0],
-    color: i === final ? "#92400e" : SUITS[i % SUITS.length][1],
+  const checkpoints: Checkpoint[] = ctx.days.map((d, i) => ({
+    index: i,
+    suit: SUITS[i % SUITS.length],
     label: d.label || prettyDate(d.day_date),
     date: shortDate(d.day_date),
-    stage: i === final ? "Final Stage" : `Stage ${i + 1}`,
-    final: i === final,
     // Who gets in, next to the date (only when some day is not free for everyone).
     rule: access.length ? (d.access === "members" ? "Members only" : d.access === "members_or_fee" ? `Members free · others ${fmtDT(d.entry_fee ?? 5)}` : "Free entry") : "",
+    stage: i === final ? "Final Stage" : `Stage ${i + 1}`,
+    final: i === final,
   }));
-  const heading =
-    final > 0 ? `Event checkpoints (${final} session${final === 1 ? "" : "s"} + ${checkpoints[final].label})` : ctx.days.length ? "Event checkpoint" : "";
+  const heading = final > 0 ? `${final} session${final === 1 ? "" : "s"} + ${checkpoints[final].label}` : ctx.days.length ? "1 day" : "";
 
   // Plain text, for mail apps that don't show HTML.
+  const plain = (p: string) => fill(p).replace(/^#\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1");
   const text = [
-    ...paragraphs.map((p) => fill(p).replace(/^#\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1")),
-    `Pass holder: ${ctx.fullName}`,
+    ...top.map(plain),
+    `Player: ${ctx.fullName}`,
     "[Your QR code is attached as qr.png] Show it at each session entrance.",
     `Backup code (if the QR doesn't work): ${ctx.shortCode}`,
-    heading && [`${heading}:`, ...checkpoints.map((c) => `- ${c.label} · ${c.date} (${c.stage})`)].join("\n"),
+    heading && [`Sessions (${heading}):`, ...checkpoints.map((c) => `- ${c.label} · ${c.date} (${c.stage})`)].join("\n"),
     access.length ? ["Entry:", ...access.map((l) => `- ${l}`)].join("\n") : "",
+    ...notes.map(plain),
     ctx.location ? `Where: ${ctx.location}` : "",
     KEEP_PRIVATE,
     "Organized by Cyber Trace Club",
@@ -159,77 +156,37 @@ export function buildQrEmail(to: string, ctx: EmailContext, png: Buffer): QrEmai
   const para = (p: string) =>
     esc(p)
       .replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => {
-        if (k === "code") return `<b style="font-family:${MONO};letter-spacing:2px;color:#0f172a">${esc(ctx.shortCode)}</b>`;
+        if (k === "code") return `<b style="font-family:${MONO};letter-spacing:2px">${esc(ctx.shortCode)}</b>`;
         const v = values[k];
         if (v === undefined) return m;
         return k === "name" || k === "event" ? `<strong>${esc(v)}</strong>` : esc(v);
       })
       .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
       .replace(/\n/g, "<br>");
-  const cell = "padding:9px 14px;border-bottom:1px solid #edf2f7;color:#334155;font-size:13px";
-  const rows = checkpoints
-    .map((c, i) => {
-      const last = i === checkpoints.length - 1 ? ";border-bottom:none" : "";
-      return `<tr${c.final ? ' style="background:#fffbeb"' : ""}>
-<td style="${cell}${last}${c.final ? ";font-weight:700;color:#92400e" : ""}"><span style="font-weight:700;margin-right:6px;color:${c.color}">${c.icon}</span>${esc(c.label)}<br><span style="font-size:12px;font-weight:400;color:#64748b">${c.date}${c.rule ? ` · ${c.rule}` : ""}</span></td>
-<td style="${cell}${last};text-align:right;font-size:12px;${c.final ? "font-weight:700;color:#b45309" : "color:#64748b"}">${c.stage}</td>
-</tr>`;
-    })
-    .join("\n");
+  // "# " makes its own line a headline; the lines under it stay normal text.
+  const blocks = (ps: string[]): Block[] =>
+    ps.flatMap((p) => {
+      if (!/^#\s+/.test(p)) return [{ headline: false, html: para(p) }];
+      const [first, ...rest] = p.replace(/^#\s+/, "").split("\n");
+      const body = rest.join("\n").trim();
+      return [{ headline: true, html: para(first) }, ...(body ? [{ headline: false, html: para(body) }] : [])];
+    });
   const logo = emailLogo();
-
-  const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><title>${esc(ctx.eventName)}</title></head>
-<body style="margin:0;padding:0;background:#f1f5f9;-webkit-font-smoothing:antialiased">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f1f5f9;padding:24px 12px;font-family:${FONT};color:#1e293b">
-<tr><td align="center">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;border-collapse:separate">
-
-<tr><td style="background:#0f172a;padding:30px 20px 22px;text-align:center;border-radius:16px 16px 0 0">
-${logo ? `<img src="cid:logo" width="76" alt="Cyber Trace" style="display:block;width:76px;height:auto;margin:0 auto 12px;border:0">` : ""}
-<div style="font-size:11px;font-weight:700;color:#eab308;letter-spacing:2.5px;text-transform:uppercase;margin:0 0 4px">Cyber Trace Club</div>
-<h1 style="font-size:22px;font-weight:800;letter-spacing:0.5px;margin:0;color:#ffffff;line-height:1.3">${esc(ctx.eventName)}</h1>
-${ctx.tagline?.trim() ? `<div style="font-size:12px;color:#94a3b8;margin-top:6px;letter-spacing:1px">${esc(ctx.tagline.trim())}</div>` : ""}
-</td></tr>
-
-<tr><td style="padding:26px 24px 16px;text-align:center">
-<div style="display:inline-block;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:5px 14px;border-radius:20px;letter-spacing:1px;text-transform:uppercase;margin:0 0 14px;border:1px solid #fde68a">Official Access Pass</div>
-${paragraphs
-  .map((p) =>
-    /^#\s+/.test(p)
-      ? `<h2 style="font-size:20px;font-weight:700;color:#0f172a;margin:0 0 10px;line-height:1.35">${para(p.replace(/^#\s+/, ""))}</h2>`
-      : `<p style="font-size:14px;line-height:1.6;color:#475569;margin:0 auto 12px;max-width:440px">${para(p)}</p>`,
-  )
-  .join("\n")}
-<div style="border-top:2px dashed #cbd5e1;margin:22px 0 20px;height:0;line-height:0;font-size:0">&nbsp;</div>
-<div style="font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin:0 0 4px">Pass holder</div>
-<div style="font-family:${MONO};font-size:19px;font-weight:800;color:#1e3a8a;letter-spacing:0.8px;margin:0 0 14px;line-height:1.3">${esc(ctx.fullName)}</div>
-<div style="display:inline-block;padding:12px;background:#ffffff;border:2px solid #e2e8f0;border-radius:14px;margin:0 0 12px"><img src="cid:qr" width="290" height="290" alt="Your QR access pass" style="display:block;width:290px;height:290px;border:0"></div>
-<div style="font-family:${MONO};font-size:12px;color:#64748b;margin:0 0 22px;letter-spacing:1px">BACKUP CODE: <b style="font-size:15px;color:#0f172a;letter-spacing:3px">${esc(ctx.shortCode)}</b></div>
-${
-  checkpoints.length
-    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;text-align:left;margin:6px 0 12px">
-<tr><td colspan="2" style="background:#f1f5f9;padding:10px 14px;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e2e8f0;border-radius:10px 10px 0 0">${esc(heading)}</td></tr>
-${rows}
-</table>`
-    : ""
-}
-${
-  ctx.days.some((d) => d.access === "members" || d.access === "members_or_fee")
-    ? `<div style="font-size:12px;line-height:1.55;color:#64748b;margin:0 0 6px;padding:0 4px">Not a member? Join at the desk for <b style="color:#334155">${fmtDT(ctx.membershipFee ?? 15)}</b>: valid for the whole academic year, and every day is free.</div>`
-    : ""
-}
-</td></tr>
-
-<tr><td style="background:#0f172a;color:#94a3b8;padding:22px 20px;text-align:center;font-size:12px;line-height:1.6;border-radius:0 0 16px 16px">
-<p style="margin:0 0 6px">Please present this QR code at each session entrance.${ctx.location ? ` · ${esc(ctx.location)}` : ""}</p>
-<p style="margin:0 0 6px">${esc(KEEP_PRIVATE)}</p>
-<p style="margin:0">Organized by <b style="color:#f8fafc">Cyber Trace Club</b></p>
-</td></tr>
-
-</table>
-</td></tr></table>
-</body></html>`;
+  const design: EmailDesign = EMAIL_DESIGNS.includes(ctx.design as EmailDesign) ? (ctx.design as EmailDesign) : DEFAULT_DESIGN;
+  const html = renderEmail(design, {
+    eventName: ctx.eventName,
+    tagline: ctx.tagline?.trim() ?? "",
+    fullName: ctx.fullName,
+    shortCode: ctx.shortCode,
+    location: ctx.location,
+    top: blocks(top),
+    notes: blocks(notes),
+    checkpoints,
+    heading,
+    joinFee: ctx.days.some((d) => d.access === "members" || d.access === "members_or_fee") ? fmtDT(ctx.membershipFee ?? 15) : null,
+    logo: !!logo,
+    keepPrivate: KEEP_PRIVATE,
+  });
 
   return { to, subject, html, text, png, logo, shortCode: ctx.shortCode };
 }
@@ -357,10 +314,11 @@ async function loadForEmail(attendeeId: string) {
     email_subject: string | null;
     email_body: string | null;
     email_tagline: string | null;
+    email_design: string | null;
     days: { day_date: string; label: string | null; access: string; entry_fee: number }[];
   }>(
     `select a.id, a.event_id, a.full_name, a.email, a.qr_token, a.short_code, a.email_attempts,
-            e.name as event_name, e.location, e.membership_fee, e.email_subject, e.email_body, e.email_tagline,
+            e.name as event_name, e.location, e.membership_fee, e.email_subject, e.email_body, e.email_tagline, e.email_design,
             coalesce((select json_agg(json_build_object('day_date', d.day_date, 'label', d.label, 'access', d.access, 'entry_fee', d.entry_fee) order by d.day_date)
                         from event_days d where d.event_id = e.id), '[]') as days
        from attendees a join events e on e.id = a.event_id where a.id = $1`,
@@ -413,6 +371,7 @@ export async function sendAttendeeEmail(attendeeId: string, opts: { reason: Send
         shortCode: a.short_code,
         membershipFee: a.membership_fee,
         tagline: a.email_tagline,
+        design: a.email_design,
         subjectTemplate: a.email_subject,
         bodyTemplate: a.email_body,
       },

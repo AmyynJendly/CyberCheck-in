@@ -5,7 +5,7 @@ import { useApp } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
 import { AdminTitle } from "@/components/admin/AdminShell";
 import { EmailsAdmin } from "@/components/admin/EmailsAdmin";
-import { Button, FieldRow, NeedEvent, Notice, Row, Section, TextField } from "@/components/ui";
+import { Button, FieldRow, MenuSelect, NeedEvent, Notice, Row, Section, TextField } from "@/components/ui";
 import { DEFAULT_BODY, DEFAULT_SUBJECT } from "@/lib/email-defaults";
 
 const CHIPS: { key: string; hint: string }[] = [
@@ -23,7 +23,8 @@ function TemplateEditor({ eventId }: { eventId: string }) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [tagline, setTagline] = useState("");
-  const [saved, setSaved] = useState({ subject: "", body: "", tagline: "" });
+  const [design, setDesign] = useState("borderland");
+  const [saved, setSaved] = useState({ subject: "", body: "", tagline: "", design: "borderland" });
   const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
   const [testTo, setTestTo] = useState("");
   const [msg, setMsg] = useState<Msg>(null);
@@ -32,25 +33,27 @@ function TemplateEditor({ eventId }: { eventId: string }) {
 
   useEffect(() => {
     (async () => {
-      const r = await api<{ events: { id: string; email_subject: string | null; email_body: string | null; email_tagline: string | null }[] }>("/api/admin/events");
+      const r = await api<{ events: { id: string; email_subject: string | null; email_body: string | null; email_tagline: string | null; email_design: string | null }[] }>("/api/admin/events");
       const e = r.events.find((x) => x.id === eventId);
       const s = e?.email_subject ?? DEFAULT_SUBJECT;
       const b = e?.email_body ?? DEFAULT_BODY;
       const t = e?.email_tagline ?? "";
+      const d = e?.email_design ?? "borderland";
       setSubject(s);
       setBody(b);
       setTagline(t);
-      setSaved({ subject: s, body: b, tagline: t });
+      setDesign(d);
+      setSaved({ subject: s, body: b, tagline: t, design: d });
     })().catch((e) => setMsg({ tone: "error", text: errorMessage(e) }));
   }, [eventId]);
 
   const refreshPreview = useCallback(async () => {
     try {
-      setPreview(await api(`/api/admin/events/${eventId}/email-preview`, { body: { subject, body, tagline } }));
+      setPreview(await api(`/api/admin/events/${eventId}/email-preview`, { body: { subject, body, tagline, design } }));
     } catch (e) {
       setMsg({ tone: "error", text: errorMessage(e) });
     }
-  }, [eventId, subject, body, tagline]);
+  }, [eventId, subject, body, tagline, design]);
 
   useEffect(() => {
     if (!body) return;
@@ -83,7 +86,7 @@ function TemplateEditor({ eventId }: { eventId: string }) {
     }
   };
 
-  const dirty = subject !== saved.subject || body !== saved.body || tagline !== saved.tagline;
+  const dirty = subject !== saved.subject || body !== saved.body || tagline !== saved.tagline || design !== saved.design;
 
   return (
     <section className="space-y-4">
@@ -91,11 +94,25 @@ function TemplateEditor({ eventId }: { eventId: string }) {
         <div className="space-y-4">
           <Section
             header="QR email template"
-            footer="The text at the top of the email. A blank line starts a new paragraph; a line starting with “# ” is a headline; **like this** is bold. The pass holder's name, QR code, backup code, session list and entry rules are always added below it. Tap a placeholder to insert it."
+            footer="The text at the top of the email. A blank line starts a new paragraph; a line starting with “# ” is a headline; **like this** is bold; text after a line with “---” goes below the session list (e.g. what to bring). The player's name, QR code, backup code, session list and entry rules are always added. Tap a placeholder to insert it."
           >
             <FieldRow label="Subject" htmlFor="tpl-subject">
               <TextField id="tpl-subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
             </FieldRow>
+            <Row
+              title="Design"
+              trailing={
+                <MenuSelect
+                  label="Design"
+                  value={design}
+                  onChange={setDesign}
+                  options={[
+                    { value: "borderland", label: "Borderland (playing card)" },
+                    { value: "classic", label: "Classic" },
+                  ]}
+                />
+              }
+            />
             <FieldRow label="Tagline" htmlFor="tpl-tagline">
               <TextField id="tpl-tagline" value={tagline} placeholder="Line under the event name (optional)" onChange={(e) => setTagline(e.target.value)} />
             </FieldRow>
@@ -105,7 +122,7 @@ function TemplateEditor({ eventId }: { eventId: string }) {
                 aria-label="Email body"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                rows={8}
+                rows={12}
                 className="w-full resize-y rounded-[10px] bg-fill px-3 py-2 text-[15px] leading-6 text-label outline-none"
               />
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -129,8 +146,8 @@ function TemplateEditor({ eventId }: { eventId: string }) {
               disabled={busy || !dirty}
               onClick={() =>
                 run(async () => {
-                  await api(`/api/admin/events/${eventId}`, { method: "PATCH", body: { email_subject: subject, email_body: body, email_tagline: tagline } });
-                  setSaved({ subject, body, tagline });
+                  await api(`/api/admin/events/${eventId}`, { method: "PATCH", body: { email_subject: subject, email_body: body, email_tagline: tagline, email_design: design } });
+                  setSaved({ subject, body, tagline, design });
                   return "Template saved. New emails use it.";
                 })
               }
@@ -158,7 +175,7 @@ function TemplateEditor({ eventId }: { eventId: string }) {
               disabled={busy || !testTo.trim()}
               onClick={() =>
                 run(async () => {
-                  await api(`/api/admin/events/${eventId}/email-test`, { body: { to: testTo, subject, body, tagline }, timeoutMs: 30_000 });
+                  await api(`/api/admin/events/${eventId}/email-test`, { body: { to: testTo, subject, body, tagline, design }, timeoutMs: 30_000 });
                   return `Test sent to ${testTo}. Check the inbox (and spam).`;
                 })
               }

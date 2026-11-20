@@ -52,7 +52,7 @@ export function cleanDay(v: unknown): { day_date: string; label: string | null; 
 export async function listAdminEvents() {
   const r = await query(
     `select e.id, e.slug, e.name, e.location, e.form_secret, e.is_active, e.created_at, e.membership_fee,
-            e.email_subject, e.email_body, e.email_tagline,
+            e.email_subject, e.email_body, e.email_tagline, e.email_design,
             coalesce(json_agg(json_build_object('id', d.id, 'day_date', d.day_date, 'label', d.label,
                      'access', d.access, 'entry_fee', d.entry_fee, 'capacity', d.capacity,
                      'checkins', (select count(*) from checkins c where c.event_day_id = d.id and c.undone_at is null))
@@ -115,6 +115,10 @@ export async function updateEvent(staff: Staff, id: string, body: Record<string,
   if (body.membership_fee !== undefined) add("membership_fee", cleanFee(body.membership_fee, "Membership fee"));
   if (body.email_subject !== undefined) add("email_subject", typeof body.email_subject === "string" && body.email_subject.trim() ? body.email_subject.trim().slice(0, 300) : null);
   if (body.email_body !== undefined) add("email_body", typeof body.email_body === "string" && body.email_body.trim() ? body.email_body.slice(0, 20000) : null);
+  if (body.email_design !== undefined) {
+    if (body.email_design !== null && body.email_design !== "borderland" && body.email_design !== "classic") throw new HttpError(400, "BAD_DESIGN", "Design must be borderland or classic.");
+    add("email_design", body.email_design);
+  }
   if (body.email_tagline !== undefined) add("email_tagline", typeof body.email_tagline === "string" && body.email_tagline.trim() ? body.email_tagline.trim().slice(0, 120) : null);
   const regenerate = body.regenerate_secret === true;
   if (regenerate) {

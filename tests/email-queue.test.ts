@@ -85,42 +85,62 @@ describe("email template", () => {
     expect(m.text).toContain("Backup code (if the QR doesn't work): K7Q9XM");
   });
 
-  it("uses the access-pass design: event header, tagline, backup code, one checkpoint per day, final stage", () => {
-    const m = buildQrEmail("y@example.com", {
-      ...ctx,
-      eventName: "tracers_camp & CyberDay CTF",
-      tagline: "♠ Alice in Borderland Edition ♦",
-      days: [
-        { day_date: "2026-11-23", label: "Linux fundamentals", access: "free" },
-        { day_date: "2026-11-24", label: "Networks under attack", access: "members" },
-        { day_date: "2026-11-27", label: "CyberDay CTF", access: "members_or_fee", entry_fee: 5 },
-      ],
-      membershipFee: 15,
-    }, Buffer.from("png"));
-    expect(m.html).toContain("tracers_camp &amp; CyberDay CTF");
+  const camp = {
+    ...ctx,
+    eventName: "TracersCamp",
+    tagline: "♠ Alice in Borderland Edition ♦",
+    days: [
+      { day_date: "2026-11-23", label: "Linux fundamentals", access: "free" },
+      { day_date: "2026-11-24", label: "Networks under attack", access: "members" },
+      { day_date: "2026-11-27", label: "CyberDay CTF", access: "members_or_fee", entry_fee: 5 },
+    ],
+    membershipFee: 15,
+  };
+
+  it("Borderland (default): the pass as a playing card, one game per day, the Joker as the final stage", () => {
+    const m = buildQrEmail("y@example.com", camp, Buffer.from("png"));
+    expect(m.html).toContain(">TracersCamp</div>");
     expect(m.html).toContain("♠ Alice in Borderland Edition ♦");
-    expect(m.html).toContain(">Welcoming you to attend, Tracers-Camp</h2>"); // "# " headline in the default text
-    expect(m.html).toContain("Pass holder");
-    expect(m.html).toContain("Yasmine &lt;b&gt;");
-    expect(m.text).toContain("Pass holder: Yasmine <b>");
-    expect(m.text).not.toContain("# Welcoming");
+    expect(m.html).toContain(">Welcoming you to attend, TracersCamp</h2>"); // "# " headline in the default text
     expect(m.html).toContain("<b>CyberTracer</b>"); // **bold** in the default text
-    expect(m.html).toContain("BACKUP CODE:");
-    expect(m.html).toContain("Event checkpoints (2 sessions + CyberDay CTF)");
-    expect(m.html).toContain("Linux fundamentals<br>");
-    expect(m.html).toContain(">Mon 23 Nov · Free entry</span>");
-    expect(m.html).toContain("Stage 2");
-    expect(m.html).toContain("Final Stage");
+    expect(m.html).toContain("J<br>O<br>K<br>E<br>R"); // card corner index
+    expect(m.html).toContain("Visa · 3 days");
+    expect(m.html).toContain(">Player</div>");
+    expect(m.html).toContain("Yasmine &lt;b&gt;");
+    expect(m.html).toContain("Backup code");
+    expect(m.html).toContain("The games");
+    expect(m.html).toContain("2 sessions + CyberDay CTF");
+    expect(m.html).toContain("JKR"); // the final day is the Joker card
+    expect(m.html).toContain("Mon 23 Nov · Free entry");
     expect(m.html).toContain("Tue 24 Nov · Members only");
     expect(m.html).toContain("Fri 27 Nov · Members free · others 5 DT");
+    expect(m.html).toContain("Final Stage");
     expect(m.html).toContain("Not a member? Join at the desk for");
-    expect(m.text).toContain("CyberDay CTF: free for club members, 5 DT for everyone else.");
+    // The notes after "---": what to bring, below the games.
+    expect(m.html).toContain("Don&#39;t forget to bring");
+    expect(m.html.indexOf("Your power strip (optional)")).toBeGreaterThan(m.html.indexOf("The games"));
     expect(m.html).not.toContain("<style"); // inline styles only, for Gmail / Outlook
     expect(m.html).toContain('src="cid:logo"'); // the club logo, inline
     expect(m.logo!.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a"); // a PNG
-    expect(m.subject).toBe("Your official access pass — tracers_camp & CyberDay CTF");
+    expect(m.subject).toBe("Your official access pass — TracersCamp");
+    expect(m.text).toContain("Player: Yasmine <b>");
+    expect(m.text).not.toContain("# Welcoming");
+    expect(m.text).not.toContain("---");
     expect(m.text).toContain("- Networks under attack · Tue 24 Nov (Stage 2)");
     expect(m.text).toContain("- CyberDay CTF · Fri 27 Nov (Final Stage)");
+    expect(m.text).toContain("CyberDay CTF: free for club members, 5 DT for everyone else.");
+    expect(m.text).toContain("Don't forget to bring\n1. Your PC");
+  });
+
+  it("Classic: the first design is still available", () => {
+    const m = buildQrEmail("y@example.com", { ...camp, design: "classic" }, Buffer.from("png"));
+    expect(m.html).toContain("Pass holder");
+    expect(m.html).toContain("Event checkpoints (2 sessions + CyberDay CTF)");
+    expect(m.html).toContain("BACKUP CODE:");
+    expect(m.html).toContain("Don&#39;t forget to bring");
+    expect(m.html).not.toContain("JKR");
+    // An unknown design falls back to Borderland.
+    expect(buildQrEmail("y@example.com", { ...camp, design: "nope" }, Buffer.from("png")).html).toContain("JKR");
   });
 
   it("drops lines whose placeholder is empty", () => {

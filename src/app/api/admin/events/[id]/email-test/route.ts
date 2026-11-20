@@ -14,7 +14,7 @@ export const POST = route<RouteCtx<{ id: string }>>(async (req, ctx) => {
   const to = normalizeEmail(body.to);
   if (!to || !looksLikeEmail(to)) throw new HttpError(400, "BAD_EMAIL", "Enter the address to send the test to.");
   try {
-    await sendTestEmail(requireUuid((await ctx.params).id, "event id"), to, body.subject, body.body, body.tagline);
+    await sendTestEmail(requireUuid((await ctx.params).id, "event id"), to, { subject: body.subject, body: body.body, tagline: body.tagline, design: body.design });
   } catch (err) {
     if (err instanceof HttpError) throw err;
     throw new HttpError(502, "SEND_FAILED", `The test email didn't send: ${err instanceof Error ? err.message : String(err)}`);
