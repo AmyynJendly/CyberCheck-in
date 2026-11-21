@@ -90,7 +90,7 @@ export function EmailsAdmin() {
         </Button>
       </div>
       <p className="t-footnote -mt-4 px-1 text-label2">
-        New QR emails wait here until you press Send Waiting Now (people added at the door also go out with Auto-send below, if it&apos;s on). They go out one at a time (Gmail-friendly). Resend in Search sends one person&apos;s email right away.
+        New QR emails wait here until you press Send Waiting Now (people added at the door also go out with Auto-send at the top, if it&apos;s on). They go out one at a time (Gmail-friendly). Resend in Search sends one person&apos;s email right away.
       </p>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
       {rows === null && <Spinner />}

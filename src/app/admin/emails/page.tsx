@@ -282,12 +282,12 @@ export default function AdminEmailsPage() {
         <NeedEvent />
       ) : (
         <div className="space-y-12">
+          <AutoSend eventId={event.id} />
           <TemplateEditor eventId={event.id} />
           <section className="max-w-2xl">
             <h2 className="t-title3 mb-3">Sending</h2>
             <EmailsAdmin />
           </section>
-          <AutoSend eventId={event.id} />
           <p className="t-footnote max-w-2xl px-1 text-label2">
             To add registrations from a sheet (for example the registration stand&apos;s), use People → Import sheet. Everyone new gets their QR email from here.
           </p>
