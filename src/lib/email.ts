@@ -13,7 +13,7 @@ import path from "node:path";
 import nodemailer, { type Transporter } from "nodemailer";
 import { query } from "./db";
 import { auditSafe } from "./audit";
-import { emailMode, requireEnv, optionalEnv } from "./env";
+import { emailMode, isPlaceholder, requireEnv, optionalEnv } from "./env";
 import { qrPng } from "./qr";
 import { prettyDate } from "./time";
 import { looksLikeEmail } from "./validate";
@@ -421,6 +421,15 @@ export interface DrainResult {
   deferred: number;
   remaining: number;
   busy: boolean; // another sender holds the queue
+  not_configured: boolean; // no Gmail app password yet: nothing was tried
+}
+
+/** Can real emails go out? (Log mode always can.) Without the Gmail app password, queued emails just wait. */
+export function smtpReady(): boolean {
+  if (emailMode() === "log") return true;
+  const user = optionalEnv("GMAIL_USER");
+  const pass = optionalEnv("GMAIL_APP_PASSWORD");
+  return !!user && !!pass && !isPlaceholder(user) && !isPlaceholder(pass);
 }
 
 export async function pendingEmailCount(eventId?: string | null): Promise<number> {
@@ -440,8 +449,14 @@ export async function drainEmailQueue(opts: { budgetMs?: number; gapMs?: number 
   const budget = opts.budgetMs ?? 40_000;
   const gap = opts.gapMs ?? (emailMode() === "log" ? 0 : 250);
   const started = Date.now();
-  const out: DrainResult = { sent: 0, failed: 0, deferred: 0, remaining: 0, busy: false };
+  const out: DrainResult = { sent: 0, failed: 0, deferred: 0, remaining: 0, busy: false, not_configured: false };
   const holder = randomUUID();
+  // No Gmail password yet: don't try (each try would use up one of the email's attempts).
+  if (!smtpReady()) {
+    out.not_configured = true;
+    out.remaining = await pendingEmailCount();
+    return out;
+  }
 
   let stop = false;
   while (!stop && Date.now() - started < budget) {

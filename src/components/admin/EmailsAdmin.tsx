@@ -39,7 +39,11 @@ export function EmailsAdmin() {
     try {
       for (let round = 0; round < 30; round++) {
         const url = retryFailed && round === 0 ? "/api/admin/emails/retry-failed" : "/api/admin/emails/send";
-        const r = await api<{ sent: number; failed: number; deferred: number; remaining: number; busy: boolean }>(url, { body: {}, timeoutMs: 90_000 });
+        const r = await api<{ sent: number; failed: number; deferred: number; remaining: number; busy: boolean; not_configured: boolean }>(url, { body: {}, timeoutMs: 90_000 });
+        if (r.not_configured) {
+          setMsg({ tone: "error", text: `Gmail isn't set up yet: the app password is missing in Vercel. The ${r.remaining} emails keep waiting and go out once it's set.` });
+          return;
+        }
         sent += r.sent;
         failed += r.failed;
         setMsg({ tone: "info", text: `Sent ${sent}${failed ? `, failed ${failed}` : ""}… ${r.remaining} waiting` });

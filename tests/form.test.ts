@@ -148,8 +148,8 @@ describe("email content", () => {
       "select email_status, email_error, email_attempts from attendees where email = $1",
       [email],
     );
-    expect(a.rows[0]).toMatchObject({ email_status: "pending", email_attempts: 1 });
-    expect(a.rows[0].email_error).toMatch(/GMAIL_APP_PASSWORD/);
+    // Not even tried: no attempt used up, so nothing can end up "failed" before the password is set.
+    expect(a.rows[0]).toMatchObject({ email_status: "pending", email_attempts: 0, email_error: null });
 
     process.env.DEV_EMAIL_MODE = "log";
     const hrRes = await retryPOST(req("POST", "/api/admin/emails/retry-failed", { cookie: await cookieFor(hr), body: {} }), undefined);
