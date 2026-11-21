@@ -53,6 +53,7 @@ export async function listAdminEvents() {
   const r = await query(
     `select e.id, e.slug, e.name, e.location, e.form_secret, e.is_active, e.created_at, e.membership_fee,
             e.email_subject, e.email_body, e.email_tagline, e.email_design,
+            e.email_auto_send, e.email_auto_every, e.email_auto_last_run,
             coalesce(json_agg(json_build_object('id', d.id, 'day_date', d.day_date, 'label', d.label,
                      'access', d.access, 'entry_fee', d.entry_fee, 'capacity', d.capacity,
                      'checkins', (select count(*) from checkins c where c.event_day_id = d.id and c.undone_at is null))
@@ -118,6 +119,12 @@ export async function updateEvent(staff: Staff, id: string, body: Record<string,
   if (body.email_design !== undefined) {
     if (body.email_design !== null && body.email_design !== "borderland" && body.email_design !== "classic") throw new HttpError(400, "BAD_DESIGN", "Design must be borderland or classic.");
     add("email_design", body.email_design);
+  }
+  if (body.email_auto_send !== undefined) add("email_auto_send", body.email_auto_send === true);
+  if (body.email_auto_every !== undefined) {
+    const every = Number(body.email_auto_every);
+    if (!Number.isInteger(every) || every < 1 || every > 1440) throw new HttpError(400, "BAD_INTERVAL", "Auto-send interval must be 1 to 1440 minutes.");
+    add("email_auto_every", every);
   }
   if (body.email_tagline !== undefined) add("email_tagline", typeof body.email_tagline === "string" && body.email_tagline.trim() ? body.email_tagline.trim().slice(0, 120) : null);
   const regenerate = body.regenerate_secret === true;

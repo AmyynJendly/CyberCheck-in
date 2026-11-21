@@ -5,7 +5,7 @@ import { useApp } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
 import { AdminTitle } from "@/components/admin/AdminShell";
 import { EmailsAdmin } from "@/components/admin/EmailsAdmin";
-import { Button, FieldRow, MenuSelect, NeedEvent, Notice, Row, Section, TextField } from "@/components/ui";
+import { Button, FieldRow, MenuSelect, NeedEvent, Notice, Row, Section, TextField, Toggle } from "@/components/ui";
 import { DEFAULT_BODY, DEFAULT_SUBJECT } from "@/lib/email-defaults";
 
 const CHIPS: { key: string; hint: string }[] = [
@@ -202,6 +202,77 @@ function TemplateEditor({ eventId }: { eventId: string }) {
   );
 }
 
+/** Auto-send: every N minutes, send the QR emails of people added at the door. Off by default. */
+function AutoSend({ eventId }: { eventId: string }) {
+  const [on, setOn] = useState(false);
+  const [every, setEvery] = useState("10");
+  const [lastRun, setLastRun] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [msg, setMsg] = useState<Msg>(null);
+
+  useEffect(() => {
+    (async () => {
+      const r = await api<{ events: { id: string; email_auto_send: boolean; email_auto_every: number; email_auto_last_run: string | null }[] }>("/api/admin/events");
+      const e = r.events.find((x) => x.id === eventId);
+      setOn(!!e?.email_auto_send);
+      setEvery(String(e?.email_auto_every ?? 10));
+      setLastRun(e?.email_auto_last_run ?? null);
+      setLoaded(true);
+    })().catch((e) => setMsg({ tone: "error", text: errorMessage(e) }));
+  }, [eventId]);
+
+  const save = async (patch: { email_auto_send?: boolean; email_auto_every?: number }, ok: string) => {
+    setMsg(null);
+    try {
+      await api(`/api/admin/events/${eventId}`, { method: "PATCH", body: patch });
+      setMsg({ tone: "ok", text: ok });
+    } catch (e) {
+      setMsg({ tone: "error", text: errorMessage(e) });
+      throw e;
+    }
+  };
+
+  return (
+    <section className="max-w-2xl space-y-3">
+      <Section
+        header="Auto-send"
+        footer={`Off: nothing is sent until you press Send Waiting Now. On: every ${every} minutes, the QR emails of people added at the door (Add Person) are sent. Registrations from the forms and imports still wait for Send Waiting Now. It runs while the app is open on a phone or this page.${lastRun ? ` Last run: ${new Date(lastRun).toLocaleString("en-GB", { timeZone: "Africa/Tunis" })}.` : ""}`}
+      >
+        <Row
+          title="Auto-send new walk-ins"
+          trailing={
+            <Toggle
+              label="Auto-send"
+              checked={on}
+              disabled={!loaded}
+              onChange={(v) => {
+                setOn(v);
+                save({ email_auto_send: v }, v ? `Auto-send is on: every ${every} minutes.` : "Auto-send is off.").catch(() => setOn(!v));
+              }}
+            />
+          }
+        />
+        <Row
+          title="Send every"
+          trailing={
+            <MenuSelect
+              label="Send every"
+              value={every}
+              onChange={(v) => {
+                const prev = every;
+                setEvery(v);
+                save({ email_auto_every: Number(v) }, `Auto-send interval: ${v} minutes.`).catch(() => setEvery(prev));
+              }}
+              options={["5", "10", "15", "30", "60"].map((m) => ({ value: m, label: `${m} minutes` }))}
+            />
+          }
+        />
+      </Section>
+      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
+    </section>
+  );
+}
+
 export default function AdminEmailsPage() {
   const { event } = useApp();
   return (
@@ -216,6 +287,7 @@ export default function AdminEmailsPage() {
             <h2 className="t-title3 mb-3">Sending</h2>
             <EmailsAdmin />
           </section>
+          <AutoSend eventId={event.id} />
           <p className="t-footnote max-w-2xl px-1 text-label2">
             To add registrations from a sheet (for example the registration stand&apos;s), use People → Import sheet. Everyone new gets their QR email from here.
           </p>

@@ -445,7 +445,7 @@ export async function pendingEmailCount(eventId?: string | null): Promise<number
  * budget runs out. Safe to call from anywhere, any number of times: only one
  * caller sends, the others return immediately (busy).
  */
-export async function drainEmailQueue(opts: { budgetMs?: number; gapMs?: number } = {}): Promise<DrainResult> {
+export async function drainEmailQueue(opts: { budgetMs?: number; gapMs?: number; walkInsOf?: string } = {}): Promise<DrainResult> {
   const budget = opts.budgetMs ?? 40_000;
   const gap = opts.gapMs ?? (emailMode() === "log" ? 0 : 250);
   const started = Date.now();
@@ -466,8 +466,12 @@ export async function drainEmailQueue(opts: { budgetMs?: number; gapMs?: number 
     }
     try {
       work: for (;;) {
+        // walkInsOf: only people added at the door for that event (auto-send).
         const batch = await query<{ id: string }>(
-          "select id from attendees where email_status = 'pending' and email is not null order by updated_at, created_at limit 10",
+          `select id from attendees where email_status = 'pending' and email is not null
+              and ($1::uuid is null or (event_id = $1 and source = 'walk_in'))
+            order by updated_at, created_at limit 10`,
+          [opts.walkInsOf ?? null],
         );
         if (!batch.rowCount) break;
         for (const { id } of batch.rows) {
@@ -490,7 +494,8 @@ export async function drainEmailQueue(opts: { budgetMs?: number; gapMs?: number 
       await releaseLease(holder);
     }
     // Something may have been queued while we were releasing (its own sender saw us busy): look once more.
-    if (stop || (await pendingEmailCount()) === 0) break;
+    // (Auto-send's walk-ins-only run just stops: other emails wait for the admin, newer walk-ins for the next interval.)
+    if (stop || opts.walkInsOf || (await pendingEmailCount()) === 0) break;
   }
   out.remaining = await pendingEmailCount();
   return out;
@@ -524,4 +529,26 @@ export function autoSendOn(): boolean {
 export function drainAfterResponse(): Promise<void> {
   if (!autoSendOn()) return Promise.resolve();
   return runAfterResponse(() => drainEmailQueue({ budgetMs: 45_000 }));
+}
+
+/**
+ * Auto-send (Admin → Emails, per event, off by default): every N minutes, send
+ * the waiting QR emails of people added at the door. There is no background
+ * timer on Vercel's free plan, so this runs on the HR phones' stats polling
+ * (every 10 s while the app is open): the first poll after the interval claims
+ * the run atomically (only one per interval) and sends after the response.
+ */
+export async function maybeAutoSend(eventId: string): Promise<boolean> {
+  if (!smtpReady()) return false; // no Gmail password: nothing to try
+  const r = await query(
+    `update events set email_auto_last_run = now()
+      where id = $1 and email_auto_send
+        and (email_auto_last_run is null or email_auto_last_run <= now() - make_interval(mins => email_auto_every))
+        and exists (select 1 from attendees where event_id = $1 and source = 'walk_in' and email_status = 'pending' and email is not null)
+      returning id`,
+    [eventId],
+  );
+  if (!r.rowCount) return false;
+  await runAfterResponse(() => drainEmailQueue({ budgetMs: 40_000, walkInsOf: eventId }));
+  return true;
 }

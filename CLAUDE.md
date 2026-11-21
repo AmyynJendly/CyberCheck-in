@@ -22,7 +22,7 @@ Next.js 15 (App Router) + TypeScript + Tailwind v4 · Postgres via `pg` (Supabas
 - Every write goes to `audit_log` with the staff id.
 - HR vs admin: CSV, final report, backup list, payments list, members, staff, events, imports are admin-only (`requireStaff(req, "admin")`).
 - Login is PIN-only: `staff.pin_lookup` = HMAC(`PIN_PEPPER`, pin), unique. Limits per IP and app-wide (`login_throttle`).
-- QR emails are never sent automatically (unless `EMAIL_AUTO_SEND=on`): they wait until an admin presses Admin → Emails → Send Waiting Now. Resend in Search sends one person's email. The secret QR token never appears in an email.
+- QR emails are never sent automatically: they wait until an admin presses Admin → Emails → Send Waiting Now. Exceptions, both off: the per-event **Auto-send** switch (Admin → Emails; sends door walk-ins every N minutes, driven by the stats polling, `maybeAutoSend`) and the `EMAIL_AUTO_SEND=on` env var. Resend in Search sends one person's email. The secret QR token never appears in an email. Keep Auto-send OFF unless the user turns it on.
 - No secrets in code or git. `.env.local` (git-ignored) holds them; Vercel holds production values.
 
 ## Current event: TracersCamp (slug `bootcamp`), 23–27 Nov 2026, ISSAT Sousse
@@ -42,7 +42,7 @@ Next.js 15 (App Router) + TypeScript + Tailwind v4 · Postgres via `pg` (Supabas
 ## Commands
 - `npm run dev` — local app on http://localhost:3000 (uses `.env.local`, which points at the PRODUCTION database).
 - `npm run typecheck`, `npm run build` — must pass with zero errors before pushing.
-- `npm test` — 96 tests (the latency benchmark only runs with PERF=1). They DROP and recreate their database, so they only run against a LOCAL Postgres; a guard refuses remote hosts. This machine has no Docker: the user approved an `embedded-postgres` server in the session scratchpad (port 5432) for tests; ask before starting one.
+- `npm test` — 97 tests (the latency benchmark only runs with PERF=1). They DROP and recreate their database, so they only run against a LOCAL Postgres; a guard refuses remote hosts. This machine has no Docker: the user approved an `embedded-postgres` server in the session scratchpad (port 5432) for tests; ask before starting one.
 - `npm run migrate`, `npm run seed:admin -- --name "X" --pin 123456`.
 - `npm run loadtest -- --url … --slug load-test --pin …` and `npm run stresstest -- --url … [--bursts-only]` — against the deployed app (see HOSTING.md); the stress test creates and deletes its own TEST data.
 

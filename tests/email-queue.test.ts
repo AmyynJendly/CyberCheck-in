@@ -5,8 +5,9 @@ import { closePool, query } from "@/lib/db";
 import { buildQrEmail, deliveryGauge, devOutbox, drainEmailQueue } from "@/lib/email";
 import { POST as walkinPOST } from "@/app/api/walkin/route";
 import { POST as sendPOST } from "@/app/api/admin/emails/send/route";
+import { GET as statsGET } from "@/app/api/events/[id]/stats/route";
 import { cleanAttendeeFields, ingestFormSubmission } from "@/lib/attendees";
-import { body, cookieFor, makeEvent, makeStaff, req, uniq } from "./helpers";
+import { body, cookieFor, makeEvent, makeStaff, params, req, uniq } from "./helpers";
 
 afterAll(() => closePool());
 
@@ -83,6 +84,45 @@ describe("manual sending (EMAIL_AUTO_SEND off, the default)", () => {
       const admin = await makeStaff("admin");
       await sendPOST(req("POST", "/api/admin/emails/send", { cookie: await cookieFor(admin), body: {} }), undefined);
       expect(sentTo()).toHaveLength(2); // the admin pressed Send
+    } finally {
+      process.env.EMAIL_AUTO_SEND = "on";
+    }
+  });
+});
+
+describe("auto-send (Admin → Emails), off by default", () => {
+  it("sends only door walk-ins, only when on, at most once per interval", async () => {
+    process.env.DEV_EMAIL_MODE = "log";
+    process.env.EMAIL_AUTO_SEND = "";
+    try {
+      const ev = await makeEvent();
+      const hr = await makeStaff("hr");
+      const cookie = await cookieFor(hr);
+      const formEmail = `${uniq("auto-form")}@example.com`;
+      await formPOST(req("POST", "/api/form-submit", { body: { event_slug: ev.slug, response_id: uniq("a"), full_name: "Auto Form", email: formEmail }, headers: { "x-form-secret": ev.secret } }), undefined);
+      const walk = async (name: string) => {
+        const email = `${uniq("auto-walk")}@example.com`;
+        await walkinPOST(req("POST", "/api/walkin", { cookie, body: { event_id: ev.id, full_name: name, email } }), undefined);
+        return email;
+      };
+      const poll = () => statsGET(req("GET", `/api/events/${ev.id}/stats`, { cookie }), params({ id: ev.id }));
+      const sent = (email: string) => devOutbox().some((m) => m.to === email);
+
+      const w1 = await walk("Walker One");
+      await poll();
+      expect(sent(w1)).toBe(false); // off: nothing
+
+      await query("update events set email_auto_send = true, email_auto_every = 10 where id = $1", [ev.id]);
+      await poll();
+      expect(sent(w1)).toBe(true); // on: the walk-in goes out
+      expect(sent(formEmail)).toBe(false); // the form registration still waits for Send Waiting Now
+
+      const w2 = await walk("Walker Two");
+      await poll();
+      expect(sent(w2)).toBe(false); // within the 10 minutes: waits
+      await query("update events set email_auto_last_run = now() - interval '11 minutes' where id = $1", [ev.id]);
+      await poll();
+      expect(sent(w2)).toBe(true); // next interval: sent
     } finally {
       process.env.EMAIL_AUTO_SEND = "on";
     }

@@ -3,6 +3,7 @@ import { requireStaff } from "@/lib/auth";
 import { requireEvent } from "@/lib/events";
 import { getEventStats } from "@/lib/stats";
 import { optionalUuid, requireUuid } from "@/lib/validate";
+import { maybeAutoSend } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,5 +13,8 @@ export const GET = route<RouteCtx<{ id: string }>>(async (req, ctx) => {
   const id = requireUuid((await ctx.params).id, "event id");
   await requireEvent(id);
   const dayId = optionalUuid(req.nextUrl.searchParams.get("day_id"), "day_id");
-  return json(await getEventStats(id, { dayId, staffId: staff.id }));
+  const stats = await getEventStats(id, { dayId, staffId: staff.id });
+  // Auto-send piggybacks on this polling (see maybeAutoSend); off unless the admin turned it on.
+  await maybeAutoSend(id);
+  return json(stats);
 });
