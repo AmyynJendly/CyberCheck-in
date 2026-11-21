@@ -12,3 +12,6 @@ process.env.APP_BASE_URL = "http://localhost:3000";
 process.env.GMAIL_USER = "cybertrace.issatso@gmail.com";
 process.env.GMAIL_APP_PASSWORD = "REPLACE_ME_GMAIL_APP_PASSWORD";
 process.env.PIN_PEPPER = "test-pin-pepper-test-pin-pepper-0123456789";
+// The app sends nothing on its own unless EMAIL_AUTO_SEND=on (the admin presses "Send Waiting Now").
+// Most tests exercise the queue end to end, so they switch it on; tests/email-queue.test.ts checks "off".
+process.env.EMAIL_AUTO_SEND = "on";

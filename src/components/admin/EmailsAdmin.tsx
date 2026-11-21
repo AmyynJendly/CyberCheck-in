@@ -49,7 +49,7 @@ export function EmailsAdmin() {
         setMsg({ tone: "info", text: `Sent ${sent}${failed ? `, failed ${failed}` : ""}… ${r.remaining} waiting` });
         if (r.remaining <= 0) break;
         if (r.deferred && !r.sent) {
-          setMsg({ tone: "error", text: `Gmail is refusing for now (${r.remaining} waiting). They'll go out automatically; try again in a few minutes.` });
+          setMsg({ tone: "error", text: `Gmail is refusing for now (${r.remaining} waiting). Try Send Waiting Now again in a few minutes.` });
           return;
         }
         if (r.busy) await new Promise((res) => setTimeout(res, 3000)); // another sender is working; wait for it
@@ -90,7 +90,7 @@ export function EmailsAdmin() {
         </Button>
       </div>
       <p className="t-footnote -mt-4 px-1 text-label2">
-        New QR emails send automatically, one at a time, right after each registration. Waiting ones are also retried every 5 minutes by the form&apos;s script.
+        Nothing is sent automatically: new QR emails wait here until you press Send Waiting Now. They then go out one at a time (Gmail-friendly). Resend in Search still sends one person&apos;s email right away.
       </p>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
       {rows === null && <Spinner />}

@@ -511,7 +511,17 @@ export async function runAfterResponse(task: () => Promise<unknown>): Promise<vo
   }
 }
 
-/** Kick the queue after the response (form submissions, walk-ins, imports). */
+/** Automatic sending is off unless EMAIL_AUTO_SEND=on: emails wait until an admin presses Send Waiting Now. */
+export function autoSendOn(): boolean {
+  return optionalEnv("EMAIL_AUTO_SEND")?.toLowerCase() === "on";
+}
+
+/**
+ * Kick the queue after the response (form submissions, walk-ins, imports, the
+ * Apps Script ping) — only when EMAIL_AUTO_SEND=on. Off by default: QR emails
+ * wait in the queue and go out when an admin presses Admin → Emails → Send Waiting Now.
+ */
 export function drainAfterResponse(): Promise<void> {
+  if (!autoSendOn()) return Promise.resolve();
   return runAfterResponse(() => drainEmailQueue({ budgetMs: 45_000 }));
 }

@@ -101,7 +101,7 @@ export default function WalkInPage() {
                 <p className="t-subhead mt-2 text-label2">
                   Backup code <span className="ml-1 font-mono text-[17px] font-semibold tracking-[0.14em] text-label">{result.short_code}</span>
                 </p>
-                {result.email_queued && <p className="t-footnote mt-1 text-label2">Their QR code is on its way by email.</p>}
+                {result.email_queued && <p className="t-footnote mt-1 text-label2">Their QR email goes out when the admin sends the waiting emails.</p>}
               </div>
             </div>
           )}

@@ -3,8 +3,10 @@ import { afterAll, describe, expect, it } from "vitest";
 import { POST as formPOST } from "@/app/api/form-submit/route";
 import { closePool, query } from "@/lib/db";
 import { buildQrEmail, deliveryGauge, devOutbox, drainEmailQueue } from "@/lib/email";
+import { POST as walkinPOST } from "@/app/api/walkin/route";
+import { POST as sendPOST } from "@/app/api/admin/emails/send/route";
 import { cleanAttendeeFields, ingestFormSubmission } from "@/lib/attendees";
-import { makeEvent, req, uniq } from "./helpers";
+import { body, cookieFor, makeEvent, makeStaff, req, uniq } from "./helpers";
 
 afterAll(() => closePool());
 
@@ -52,6 +54,38 @@ describe("email queue", () => {
     // With nothing pending, everyone finishes quickly; at most one ever held the lease at once,
     // and no run reports sends that another also reported.
     expect(results.reduce((s, r) => s + r.sent, 0)).toBe(0);
+  });
+});
+
+describe("manual sending (EMAIL_AUTO_SEND off, the default)", () => {
+  it("registrations and walk-ins send nothing; only the admin's Send Waiting Now does", async () => {
+    process.env.DEV_EMAIL_MODE = "log";
+    process.env.EMAIL_AUTO_SEND = "";
+    try {
+      const ev = await makeEvent();
+      const formEmail = `${uniq("manual")}@example.com`;
+      const walkEmail = `${uniq("manual-walk")}@example.com`;
+      const res = await formPOST(
+        req("POST", "/api/form-submit", { body: { event_slug: ev.slug, response_id: uniq("m"), full_name: "Manual Form", email: formEmail }, headers: { "x-form-secret": ev.secret } }),
+        undefined,
+      );
+      expect(res.status).toBe(200);
+      const hr = await makeStaff("hr");
+      const w = await walkinPOST(req("POST", "/api/walkin", { cookie: await cookieFor(hr), body: { event_id: ev.id, full_name: "Manual Walker", email: walkEmail } }), undefined);
+      expect(await body(w)).toMatchObject({ status: "OK", email_queued: true });
+      const ping = await formPOST(req("POST", "/api/form-submit", { body: { event_slug: ev.slug, ping: true }, headers: { "x-form-secret": ev.secret } }), undefined);
+      expect(ping.status).toBe(200);
+      const sentTo = () => devOutbox().filter((m) => m.to === formEmail || m.to === walkEmail);
+      expect(sentTo()).toHaveLength(0); // nothing went out on its own
+      const st = await query<{ email_status: string }>("select email_status from attendees where email = any($1) order by email", [[formEmail, walkEmail]]);
+      expect(st.rows.map((r) => r.email_status)).toEqual(["pending", "pending"]);
+
+      const admin = await makeStaff("admin");
+      await sendPOST(req("POST", "/api/admin/emails/send", { cookie: await cookieFor(admin), body: {} }), undefined);
+      expect(sentTo()).toHaveLength(2); // the admin pressed Send
+    } finally {
+      process.env.EMAIL_AUTO_SEND = "on";
+    }
   });
 });
 
