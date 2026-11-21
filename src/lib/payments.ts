@@ -90,7 +90,18 @@ export async function voidPayment(admin: Staff, paymentId: string, reasonRaw: un
       );
       if (!other.rowCount) {
         const d = await c.query("delete from members where id = $1 and source = 'desk'", [p.member_id]);
-        membershipRemoved = !!d.rowCount;
+        // Or: an existing (expired) membership renewed with this payment → back to how it was.
+        const back = d.rowCount
+          ? d
+          : await c.query(
+              `update members m
+                  set valid_until = m.prev_valid_until, needs_review = m.prev_needs_review,
+                      prev_valid_until = null, prev_needs_review = null, extended_at = null, updated_at = now()
+                 from payments pay
+                where m.id = $1 and pay.id = $2 and m.extended_at = pay.created_at and m.prev_valid_until is not null`,
+              [p.member_id, p.id],
+            );
+        membershipRemoved = !!back.rowCount;
       }
     }
     await audit(

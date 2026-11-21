@@ -47,13 +47,16 @@ export default function RecentPage() {
     setError(null);
     setDone(null);
     try {
-      const r = await api<{ refund: number; membership_removed: boolean }>("/api/checkin/undo", { body: { checkin_id: it.id } });
+      const r = await api<{ refund: number; membership_removed: boolean; person_removed?: boolean }>("/api/checkin/undo", { body: { checkin_id: it.id } });
+      const money = r.refund ? ` Give back ${r.refund} DT.` : "";
       setDone(
-        r.refund
-          ? `Undone. Give ${it.name} back ${r.refund} DT: the payment is cancelled${r.membership_removed ? " and they're no longer a member" : ""}.`
-          : r.membership_removed
-            ? `Undone. ${it.name} is no longer counted as a member.`
-            : `Undone. ${it.name}'s QR code works again today.`,
+        r.person_removed
+          ? `Undone. ${it.name} was added here, so they're removed from the list too.${money} If they're really here, use Add Person again.`
+          : r.refund
+            ? `Undone. Give ${it.name} back ${r.refund} DT: the payment is cancelled${r.membership_removed ? " and they're no longer a member" : ""}.`
+            : r.membership_removed
+              ? `Undone. ${it.name} is no longer counted as a member.`
+              : `Undone. ${it.name}'s QR code works again today.`,
       );
       await load();
     } catch (e) {

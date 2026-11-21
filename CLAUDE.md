@@ -18,7 +18,7 @@ Next.js 15 (App Router) + TypeScript + Tailwind v4 · Postgres via `pg` (Supabas
 ## Rules that must not break
 - One active check-in per person per day: partial unique index `one_checkin_per_day`. Never "select then insert".
 - Seat limits: trigger on `checkins` keeps `event_days.seats_taken`; raises `DAY_FULL`. Exception (migration 009): people who paid at the registration stand get in on a full day (`checkins.over_limit`).
-- Payment + check-in happen in one transaction, check-in row first. Undo reverses the whole door action (cancels the payment and removes a membership created with that check-in).
+- Payment + check-in happen in one transaction, check-in row first. Undo reverses the whole door action: cancels the payment, removes a membership created with that check-in, puts back an expired membership it renewed (migration 012: `members.prev_valid_until/prev_needs_review/extended_at`), and removes a person added with Add Person when that was their only check-in and no QR email went out.
 - Every write goes to `audit_log` with the staff id.
 - HR vs admin: CSV, final report, backup list, payments list, members, staff, events, imports are admin-only (`requireStaff(req, "admin")`).
 - Login is PIN-only: `staff.pin_lookup` = HMAC(`PIN_PEPPER`, pin), unique. Limits per IP and app-wide (`login_throttle`).
@@ -42,7 +42,7 @@ Next.js 15 (App Router) + TypeScript + Tailwind v4 · Postgres via `pg` (Supabas
 ## Commands
 - `npm run dev` — local app on http://localhost:3000 (uses `.env.local`, which points at the PRODUCTION database).
 - `npm run typecheck`, `npm run build` — must pass with zero errors before pushing.
-- `npm test` — 97 tests (the latency benchmark only runs with PERF=1). They DROP and recreate their database, so they only run against a LOCAL Postgres; a guard refuses remote hosts. This machine has no Docker: the user approved an `embedded-postgres` server in the session scratchpad (port 5432) for tests; ask before starting one.
+- `npm test` — 99 tests (the latency benchmark only runs with PERF=1). They DROP and recreate their database, so they only run against a LOCAL Postgres; a guard refuses remote hosts. This machine has no Docker: the user approved an `embedded-postgres` server in the session scratchpad (port 5432) for tests; ask before starting one.
 - `npm run migrate`, `npm run seed:admin -- --name "X" --pin 123456`.
 - `npm run loadtest -- --url … --slug load-test --pin …` and `npm run stresstest -- --url … [--bursts-only]` — against the deployed app (see HOSTING.md); the stress test creates and deletes its own TEST data.
 

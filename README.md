@@ -74,7 +74,7 @@ curl -X POST http://localhost:3000/api/form-submit \
 
 ```bash
 docker compose up -d db
-npm test            # 97 tests (one latency benchmark runs only with PERF=1), against the cybertrace_test database (recreated on each run)
+npm test            # 99 tests (one latency benchmark runs only with PERF=1), against the cybertrace_test database (recreated on each run)
 npm run typecheck
 npm run build
 ```
@@ -224,7 +224,7 @@ The interface follows Apple's dark-mode design language: the system font (SF Pro
 - **Today** = the event day whose date is today in **Africa/Tunis**. If there is none, the scanner says "No event day today". Admins can pick a day in the dropdown on Home / Scan (remembered on that phone for the rest of the day). HR can't.
 - **Duplicates:** the same `response_id` → nothing changes and no email is sent. The same email with a new response → details updated and the **same** QR re-sent.
 - **Walk-ins ("Add Person"):** any staff member; full name required, email and phone optional. Created and checked in for today in one transaction. If an email is given, the QR is emailed too (for day 2). If that email is already registered, nothing is created and the app points to the existing person.
-- **Undo:** HR can undo their own check-ins for 10 minutes (from *My Check-ins*). Admins can undo any check-in. Undo reverses the whole door action: the payment taken with that check-in is cancelled (the screen says how much to give back) and a membership created by it (joined, or “already a member”) is removed, so the next scan asks again. Older memberships are never touched.
+- **Undo:** HR can undo their own check-ins for 10 minutes (from *My Check-ins*). Admins can undo any check-in. Undo reverses the whole door action: the payment taken with that check-in is cancelled (the screen says how much to give back) and a membership created by it (joined, or “already a member”) is removed, so the next scan asks again. An expired membership that was renewed with it goes back to its old end date (also when an admin cancels the payment in Cash). Someone added with *Add Person* is removed from the list too, if that was their only check-in and their QR email hasn’t gone out (a mistake at the door). Other memberships are never touched.
 - **Login:** PIN only: the 6-digit PIN says who you are, so every PIN is unique (the app refuses a PIN someone else has). It is found through `staff.pin_lookup`, an HMAC of the PIN keyed with `PIN_PEPPER` (same value locally and on Vercel), then checked against the bcrypt hash. Wrong PINs are limited per phone (5 per 15 min) and app-wide (20 per hour); attempts are reserved atomically, so parallel guessing can't get past the limits. Admins reset PINs and clear blocks (*Unblock Logins*) in Admin → Staff. The session is an httpOnly, SameSite=Lax, signed JWT cookie (12 h). It is `Secure` whenever the app runs on https.
 - **Emails** go through the single-sender queue (see *Seats, emails and exports*). Resend from Search sends right away.
 - **Audit log:** every write (login, failed login, check-in, rejected scan, undo, walk-in, resend, email edit, export, event/staff changes, form submissions) is stored with its `staff_id`. See Admin → Activity.

@@ -81,8 +81,12 @@ export async function grantMembershipTx(
     [p.email, key],
   );
   if (existing.rows[0]) {
+    // Keep the previous state so an Undo / void of this door action can restore it (migration 012).
     await c.query(
-      "update members set valid_until = greatest(valid_until, $2), needs_review = needs_review or $3, updated_at = now() where id = $1",
+      `update members
+          set prev_valid_until = valid_until, prev_needs_review = needs_review, extended_at = now(),
+              valid_until = greatest(valid_until, $2), needs_review = needs_review or $3, updated_at = now()
+        where id = $1`,
       [existing.rows[0].id, validUntil, review],
     );
     return existing.rows[0].id;
@@ -320,7 +324,7 @@ export async function reviewMember(admin: Staff, id: string, decision: "confirm"
       await c.query("delete from members where id = $1", [id]); // attendees.member_id → null
     } else {
       // An older record that was extended by the claim: expire it again.
-      await c.query("update members set needs_review = false, valid_until = current_date - 1, updated_at = now() where id = $1", [id]);
+      await c.query("update members set needs_review = false, valid_until = current_date - 1, prev_valid_until = null, prev_needs_review = null, extended_at = null, updated_at = now() where id = $1", [id]);
     }
     await audit({ staffId: admin.id, action: decision === "confirm" ? "confirm_member" : "reject_member", details: { member_id: id, full_name: m.full_name } }, c);
     return { ok: true };

@@ -10,7 +10,7 @@ import { GET as paymentsGET } from "@/app/api/events/[id]/payments/route";
 import { POST as linkPOST } from "@/app/api/attendees/[id]/member/route";
 import { GET as csvGET } from "@/app/api/events/[id]/export.csv/route";
 import { checkInByToken, payAndCheckIn, undoCheckin } from "@/lib/checkin";
-import { cleanAttendeeFields, ingestFormSubmission } from "@/lib/attendees";
+import { cleanAttendeeFields, createWalkIn, ingestFormSubmission } from "@/lib/attendees";
 import { defaultValidUntil, parseMemberList } from "@/lib/members";
 import { buildQrEmail, accessLines } from "@/lib/email";
 import { closePool, query } from "@/lib/db";
@@ -334,6 +334,80 @@ describe("undo reverses the whole door action", () => {
     const entry = await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: payer.id, kind: "entry", method: "qr", now: dayN(1) });
     expect(await undo(entry)).toMatchObject({ refund: 5, membership_removed: false });
     expect((await ask(payer, 1)).status).toBe("PAYMENT_REQUIRED");
+  });
+
+  it("renewing an EXPIRED membership, then undo / void in Cash → the old end date is back, the next scan asks again", async () => {
+    const ev = await makePaidEvent(["members", "members"]);
+    const ask = (p: { token: string }, n: number) => checkInByToken({ staff: hr, eventId: ev.id, token: p.token, now: dayN(n) });
+    const validUntil = async (email: string) => (await query<{ v: string; r: boolean }>("select valid_until::text as v, needs_review as r from members where email = $1", [email])).rows[0];
+
+    // Pays 15 DT to renew, HR undoes it.
+    const e1 = `${uniq("x")}@example.com`;
+    await addMember("Expired One", e1, null, "2020-08-31");
+    const p1 = await person(ev.id, "Expired One", e1);
+    expect((await ask(p1, 0)).status).toBe("PAYMENT_REQUIRED");
+    const paid = await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: p1.id, kind: "membership", method: "qr", now: dayN(0) });
+    expect((await validUntil(e1)).v).not.toBe("2020-08-31");
+    expect(await undoCheckin({ staff: hr, checkinId: (paid as { checkin_id: string }).checkin_id })).toMatchObject({ refund: 15, membership_removed: true });
+    expect(await validUntil(e1)).toEqual({ v: "2020-08-31", r: false });
+    expect((await ask(p1, 0)).status).toBe("PAYMENT_REQUIRED");
+
+    // "Already a member" on an expired record, HR undoes it.
+    const e2 = `${uniq("x")}@example.com`;
+    await addMember("Expired Two", e2, null, "2020-08-31");
+    const p2 = await person(ev.id, "Expired Two", e2);
+    const claimed = await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: p2.id, kind: "claim", method: "qr", now: dayN(0) });
+    await undoCheckin({ staff: hr, checkinId: (claimed as { checkin_id: string }).checkin_id });
+    expect(await validUntil(e2)).toEqual({ v: "2020-08-31", r: false });
+
+    // Pays 15 DT to renew, the admin voids it in Cash (the check-in stays).
+    const e3 = `${uniq("x")}@example.com`;
+    await addMember("Expired Three", e3, null, "2020-08-31");
+    const p3 = await person(ev.id, "Expired Three", e3);
+    await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: p3.id, kind: "membership", method: "qr", now: dayN(0) });
+    const pay = (await query<{ id: string }>("select id from payments where attendee_id = $1", [p3.id])).rows[0];
+    const v = await voidPOST(req("POST", `/api/admin/payments/${pay.id}/void`, { cookie: await cookieFor(admin), body: { reason: "test" } }), params({ id: pay.id }));
+    expect(await body(v)).toMatchObject({ ok: true, membership_removed: true });
+    expect((await validUntil(e3)).v).toBe("2020-08-31");
+    expect((await ask(p3, 1)).status).toBe("PAYMENT_REQUIRED");
+  });
+
+  it("undoing an Add Person removes the person (added by mistake), unless their email went out or they came another day", async () => {
+    const ev = await makePaidEvent(["free", "members"]);
+    const add = (name: string, n: number, payment?: "membership") =>
+      createWalkIn({ eventId: ev.id, staff: hr, now: dayN(n), payment, fields: cleanAttendeeFields({ full_name: name, email: `${uniq("w")}@example.com`, phone: null }) }) as Promise<{ status: string; attendee_id: string; checkin_id: string }>;
+    const exists = async (id: string) => (await query("select 1 from attendees where id = $1", [id])).rowCount === 1;
+
+    // Free day: added by mistake → undo → gone, email never sent.
+    const a = await add("Typo Name", 0);
+    expect(a.status).toBe("OK");
+    expect(await undoCheckin({ staff: hr, checkinId: a.checkin_id })).toMatchObject({ ok: true, person_removed: true, refund: 0 });
+    expect(await exists(a.attendee_id)).toBe(false);
+
+    // Paid 15 DT: undo → refund 15, membership and person gone.
+    const b = await add("Wrong Person", 1, "membership");
+    expect(await undoCheckin({ staff: hr, checkinId: b.checkin_id })).toMatchObject({ refund: 15, membership_removed: true, person_removed: true });
+    expect(await exists(b.attendee_id)).toBe(false);
+    expect((await query("select 1 from payments where attendee_id = $1", [b.attendee_id])).rowCount).toBe(0);
+
+    // Their QR email already went out → keep them.
+    const c = await add("Emailed Person", 0);
+    await query("update attendees set email_status = 'sent' where id = $1", [c.attendee_id]);
+    expect(await undoCheckin({ staff: hr, checkinId: c.checkin_id })).toMatchObject({ person_removed: false });
+    expect(await exists(c.attendee_id)).toBe(true);
+
+    // Came on another day too → keep them (only that day is undone).
+    const d = await add("Two Days", 0);
+    const d2 = await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: d.attendee_id, kind: "membership", method: "manual", now: dayN(1) });
+    expect(await undoCheckin({ staff: hr, checkinId: (d2 as { checkin_id: string }).checkin_id })).toMatchObject({ refund: 15, person_removed: false });
+    expect(await undoCheckin({ staff: hr, checkinId: d.checkin_id })).toMatchObject({ person_removed: false });
+    expect(await exists(d.attendee_id)).toBe(true);
+
+    // A registered (form) person is never removed by an undo.
+    const f = await person(ev.id, "Form Person", `${uniq("f")}@example.com`);
+    const fr = await checkInByToken({ staff: hr, eventId: ev.id, token: f.token, now: dayN(0) });
+    expect(await undoCheckin({ staff: hr, checkinId: (fr as { checkin_id: string }).checkin_id })).toMatchObject({ person_removed: false });
+    expect(await exists(f.id)).toBe(true);
   });
 
   it("undoing a member's check-in leaves their membership alone", async () => {

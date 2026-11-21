@@ -5,6 +5,8 @@ import { closePool, query } from "@/lib/db";
 import { buildQrEmail, deliveryGauge, devOutbox, drainEmailQueue } from "@/lib/email";
 import { POST as walkinPOST } from "@/app/api/walkin/route";
 import { POST as sendPOST } from "@/app/api/admin/emails/send/route";
+import { POST as retryPOST } from "@/app/api/admin/emails/retry-failed/route";
+import { POST as testPOST } from "@/app/api/admin/events/[id]/email-test/route";
 import { GET as statsGET } from "@/app/api/events/[id]/stats/route";
 import { cleanAttendeeFields, ingestFormSubmission } from "@/lib/attendees";
 import { body, cookieFor, makeEvent, makeStaff, params, req, uniq } from "./helpers";
@@ -87,6 +89,22 @@ describe("manual sending (EMAIL_AUTO_SEND off, the default)", () => {
     } finally {
       process.env.EMAIL_AUTO_SEND = "on";
     }
+  });
+});
+
+describe("only an admin can send emails", () => {
+  it("HR pressing Send / Retry / Send test is refused, and nothing goes out", async () => {
+    process.env.DEV_EMAIL_MODE = "log";
+    const ev = await makeEvent();
+    const email = `${uniq("hrsend")}@example.com`;
+    await ingestFormSubmission(ev.id, uniq("r"), cleanAttendeeFields({ full_name: "Waiting Person", email }), { resendExisting: false });
+    const cookie = await cookieFor(await makeStaff("hr"));
+    expect((await sendPOST(req("POST", "/api/admin/emails/send", { cookie, body: {} }), undefined)).status).toBe(403);
+    expect((await retryPOST(req("POST", "/api/admin/emails/retry-failed", { cookie, body: {} }), undefined)).status).toBe(403);
+    const t = await testPOST(req("POST", `/api/admin/events/${ev.id}/email-test`, { cookie, body: { to: email } }), params({ id: ev.id }));
+    expect(t.status).toBe(403);
+    expect(devOutbox().filter((m) => m.to === email)).toHaveLength(0);
+    expect((await query<{ s: string }>("select email_status as s from attendees where email = $1", [email])).rows[0].s).toBe("pending");
   });
 });
 

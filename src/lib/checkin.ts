@@ -476,7 +476,36 @@ export async function undoCheckin(opts: { checkinId: string; staff: Staff }) {
         returning m.id`,
       [row.id],
     );
+    // An existing (expired) membership renewed with this check-in: put it back as it was.
+    const restored = await c.query<{ id: string }>(
+      `update members m
+          set valid_until = m.prev_valid_until, needs_review = m.prev_needs_review,
+              prev_valid_until = null, prev_needs_review = null, extended_at = null, updated_at = now()
+         from attendees a, checkins ci
+        where ci.id = $1 and a.id = ci.attendee_id and m.id = a.member_id
+          and m.extended_at = ci.checked_at and m.prev_valid_until is not null
+        returning m.id`,
+      [row.id],
+    );
+    if (restored.rows.length) removed.rows.push(...restored.rows);
     const refund = voided.rows.reduce((s, p) => s + Number(p.amount), 0);
+    // Added at the door (Add Person) and this was their only check-in, with no QR email
+    // sent yet: it was a mistake, so remove the person too (else their email would go out).
+    const walkIn = await c.query<{ id: string }>(
+      `select a.id from attendees a
+        where a.id = $1 and a.source = 'walk_in' and a.email_status <> 'sent'
+          and not exists (select 1 from checkins x where x.attendee_id = a.id and x.id <> $2)
+          and not exists (select 1 from payments p where p.attendee_id = a.id and p.voided_at is null)
+        for update`,
+      [row.attendee_id, row.id],
+    );
+    const personRemoved = walkIn.rows.length > 0;
+    if (personRemoved) {
+      await c.query("delete from payments where attendee_id = $1", [row.attendee_id]); // all cancelled (just above)
+      await c.query("delete from checkins where attendee_id = $1", [row.attendee_id]);
+      await c.query("delete from form_submissions where attendee_id = $1", [row.attendee_id]);
+      await c.query("delete from attendees where id = $1", [row.attendee_id]);
+    }
     for (const p of voided.rows) {
       await audit(
         {
@@ -501,11 +530,20 @@ export async function undoCheckin(opts: { checkinId: string; staff: Staff }) {
           original_staff_id: row.staff_id,
           ...(refund ? { refund } : {}),
           ...(removed.rows.length ? { membership_removed: true } : {}),
+          ...(personRemoved ? { person_removed: true, name: row.full_name } : {}),
         },
       },
       c,
     );
-    return { ok: true as const, checkin_id: row.id, attendee_id: row.attendee_id, name: row.full_name, refund, membership_removed: removed.rows.length > 0 };
+    return {
+      ok: true as const,
+      checkin_id: row.id,
+      attendee_id: row.attendee_id,
+      name: row.full_name,
+      refund,
+      membership_removed: removed.rows.length > 0,
+      person_removed: personRemoved,
+    };
   });
 }
 
