@@ -26,6 +26,7 @@ export default function RecentPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<Item | null>(null);
+  const [done, setDone] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -44,8 +45,16 @@ export default function RecentPage() {
     setConfirming(null);
     setBusy(true);
     setError(null);
+    setDone(null);
     try {
-      await api("/api/checkin/undo", { body: { checkin_id: it.id } });
+      const r = await api<{ refund: number; membership_removed: boolean }>("/api/checkin/undo", { body: { checkin_id: it.id } });
+      setDone(
+        r.refund
+          ? `Undone. Give ${it.name} back ${r.refund} DT: the payment is cancelled${r.membership_removed ? " and they're no longer a member" : ""}.`
+          : r.membership_removed
+            ? `Undone. ${it.name} is no longer counted as a member.`
+            : `Undone. ${it.name}'s QR code works again today.`,
+      );
       await load();
     } catch (e) {
       setError(errorMessage(e));
@@ -57,6 +66,7 @@ export default function RecentPage() {
   return (
     <Page title="My Check-ins">
       {error && <Notice tone="error">{error}</Notice>}
+      {done && <Notice tone="ok">{done}</Notice>}
       {items === null && !error && <Spinner />}
       {items?.length === 0 && (
         <div className="py-12 text-center">
@@ -65,7 +75,7 @@ export default function RecentPage() {
         </div>
       )}
       {items && items.length > 0 && (
-        <Section footer="Your last 20. You can undo your own check-ins for 10 minutes; after that, ask an admin. Undo doesn't cancel a payment; an admin does that from Cash.">
+        <Section footer="Your last 20. You can undo your own check-ins for 10 minutes; after that, ask an admin. Undo also cancels the payment or membership taken with that check-in, so the next scan asks again.">
           {items.map((it) => (
             <div key={it.id} className={`flex min-h-[60px] items-center gap-3 px-4 py-2.5 ${it.undone_at ? "opacity-45" : ""}`}>
               <div className="min-w-0 flex-1">
@@ -86,7 +96,13 @@ export default function RecentPage() {
         </Section>
       )}
 
-      <Sheet open={!!confirming} onClose={() => setConfirming(null)} title={`Undo check-in for ${confirming?.name}?`} message="Their QR code will work again today.">
+      <Sheet open={!!confirming} onClose={() => setConfirming(null)} title={`Undo check-in for ${confirming?.name}?`}
+        message={
+          confirming?.paid_amount
+            ? `Their payment of ${confirming.paid_amount} DT is cancelled too: give the money back. Their QR code will work again today.`
+            : "Anything chosen with it (membership, “already a member”) is cancelled too. Their QR code will work again today."
+        }
+      >
         <SheetAction destructive onClick={() => confirming && undo(confirming)}>
           Undo Check-in
         </SheetAction>

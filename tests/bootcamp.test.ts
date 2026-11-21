@@ -9,7 +9,7 @@ import { POST as voidPOST } from "@/app/api/admin/payments/[id]/void/route";
 import { GET as paymentsGET } from "@/app/api/events/[id]/payments/route";
 import { POST as linkPOST } from "@/app/api/attendees/[id]/member/route";
 import { GET as csvGET } from "@/app/api/events/[id]/export.csv/route";
-import { checkInByToken, payAndCheckIn } from "@/lib/checkin";
+import { checkInByToken, payAndCheckIn, undoCheckin } from "@/lib/checkin";
 import { cleanAttendeeFields, ingestFormSubmission } from "@/lib/attendees";
 import { defaultValidUntil, parseMemberList } from "@/lib/members";
 import { buildQrEmail, accessLines } from "@/lib/email";
@@ -302,5 +302,49 @@ describe("QR email on paid events", () => {
     expect(msg.text).toContain("Competition: free for club members, 5 DT for everyone else.");
     expect(msg.html).toContain("Members free · others 5 DT");
     expect(accessLines({ days: days.map((d) => ({ ...d, access: "free" })), membershipFee: 15 })).toEqual([]);
+  });
+});
+
+describe("undo reverses the whole door action", () => {
+  it("paid to join / claimed / paid entry, then undo → nothing paid, not a member, the next scan asks again", async () => {
+    const ev = await makePaidEvent(["members", "members_or_fee"]);
+    const joiner = await person(ev.id, "Joiner", `${uniq("j")}@example.com`);
+    const claimer = await person(ev.id, "Claimer", `${uniq("c")}@example.com`);
+    const payer = await person(ev.id, "Payer", `${uniq("p")}@example.com`);
+    const ask = (p: { token: string }, n: number) => checkInByToken({ staff: hr, eventId: ev.id, token: p.token, now: dayN(n) });
+    const undo = async (r: Awaited<ReturnType<typeof payAndCheckIn>>) => undoCheckin({ staff: hr, checkinId: (r as { checkin_id: string }).checkin_id });
+
+    // Joined the club (15 DT), then undone.
+    expect((await ask(joiner, 0)).status).toBe("PAYMENT_REQUIRED");
+    const joined = await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: joiner.id, kind: "membership", method: "qr", now: dayN(0) });
+    expect(joined).toMatchObject({ status: "OK", payment: { kind: "membership", amount: 15 } });
+    expect(await undo(joined)).toMatchObject({ ok: true, refund: 15, membership_removed: true });
+    expect((await ask(joiner, 0)).status).toBe("PAYMENT_REQUIRED");
+    const pay = await query<{ voided: boolean; void_reason: string }>("select voided_at is not null as voided, void_reason from payments where attendee_id = $1", [joiner.id]);
+    expect(pay.rows).toEqual([{ voided: true, void_reason: "Check-in undone" }]);
+
+    // "Already a member, not on the list", then undone.
+    const claimed = await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: claimer.id, kind: "claim", method: "qr", now: dayN(0) });
+    expect(claimed).toMatchObject({ status: "OK", claimed: true });
+    expect(await undo(claimed)).toMatchObject({ refund: 0, membership_removed: true });
+    expect((await ask(claimer, 0)).status).toBe("PAYMENT_REQUIRED");
+    expect((await query("select 1 from members where email = (select email from attendees where id = $1)", [claimer.id])).rowCount).toBe(0);
+
+    // Paid the 5 DT entry, then undone.
+    const entry = await payAndCheckIn({ staff: hr, eventId: ev.id, attendeeId: payer.id, kind: "entry", method: "qr", now: dayN(1) });
+    expect(await undo(entry)).toMatchObject({ refund: 5, membership_removed: false });
+    expect((await ask(payer, 1)).status).toBe("PAYMENT_REQUIRED");
+  });
+
+  it("undoing a member's check-in leaves their membership alone", async () => {
+    const ev = await makePaidEvent(["members"]);
+    const email = `${uniq("m")}@example.com`;
+    await addMember("Old Member", email, null);
+    const p = await person(ev.id, "Old Member", email);
+    const r = await checkInByToken({ staff: hr, eventId: ev.id, token: p.token, now: dayN(0) });
+    expect(r).toMatchObject({ status: "OK", is_member: true });
+    expect(await undoCheckin({ staff: hr, checkinId: (r as { checkin_id: string }).checkin_id })).toMatchObject({ refund: 0, membership_removed: false });
+    expect((await query("select 1 from members where email = $1", [email])).rowCount).toBe(1);
+    expect((await checkInByToken({ staff: hr, eventId: ev.id, token: p.token, now: dayN(0) })).status).toBe("OK");
   });
 });

@@ -457,17 +457,55 @@ export async function undoCheckin(opts: { checkinId: string; staff: Staff }) {
       }
       throw new HttpError(403, "TOO_LATE", `Undo is only possible within ${UNDO_WINDOW_MINUTES} minutes. Ask an admin.`);
     }
+    // Undo the whole door action, so the next scan asks again: the payment taken
+    // and the membership granted (joined / "already a member") with this check-in.
+    // They were written in the same transaction, so they carry its exact timestamp.
+    const voided = await c.query<{ id: string; kind: PaymentKind; amount: number }>(
+      `update payments p set voided_at = now(), voided_by_staff_id = $2, void_reason = 'Check-in undone'
+         from checkins ci
+        where ci.id = $1 and p.attendee_id = ci.attendee_id and p.event_day_id = ci.event_day_id
+          and p.created_at = ci.checked_at and p.voided_at is null
+        returning p.id, p.kind, p.amount`,
+      [row.id, opts.staff.id],
+    );
+    const removed = await c.query<{ id: string }>(
+      `delete from members m
+        using attendees a, checkins ci
+        where ci.id = $1 and a.id = ci.attendee_id and m.id = a.member_id
+          and m.created_at = ci.checked_at and m.source in ('desk', 'claimed')
+        returning m.id`,
+      [row.id],
+    );
+    const refund = voided.rows.reduce((s, p) => s + Number(p.amount), 0);
+    for (const p of voided.rows) {
+      await audit(
+        {
+          staffId: opts.staff.id,
+          action: "void_payment",
+          eventId: row.event_id,
+          attendeeId: row.attendee_id,
+          details: { payment_id: p.id, kind: p.kind, amount: Number(p.amount), reason: "Check-in undone", membership_removed: removed.rows.length > 0 },
+        },
+        c,
+      );
+    }
     await audit(
       {
         staffId: opts.staff.id,
         action: "undo",
         eventId: row.event_id,
         attendeeId: row.attendee_id,
-        details: { checkin_id: row.id, event_day_id: row.event_day_id, original_staff_id: row.staff_id },
+        details: {
+          checkin_id: row.id,
+          event_day_id: row.event_day_id,
+          original_staff_id: row.staff_id,
+          ...(refund ? { refund } : {}),
+          ...(removed.rows.length ? { membership_removed: true } : {}),
+        },
       },
       c,
     );
-    return { ok: true as const, checkin_id: row.id, attendee_id: row.attendee_id, name: row.full_name };
+    return { ok: true as const, checkin_id: row.id, attendee_id: row.attendee_id, name: row.full_name, refund, membership_removed: removed.rows.length > 0 };
   });
 }
 
