@@ -305,6 +305,7 @@ async function loadForEmail(attendeeId: string) {
     event_id: string;
     full_name: string;
     email: string | null;
+    alt_email: string | null;
     qr_token: string;
     short_code: string;
     email_attempts: number;
@@ -317,7 +318,7 @@ async function loadForEmail(attendeeId: string) {
     email_design: string | null;
     days: { day_date: string; label: string | null; access: string; entry_fee: number }[];
   }>(
-    `select a.id, a.event_id, a.full_name, a.email, a.qr_token, a.short_code, a.email_attempts,
+    `select a.id, a.event_id, a.full_name, a.email, a.alt_email, a.qr_token, a.short_code, a.email_attempts,
             e.name as event_name, e.location, e.membership_fee, e.email_subject, e.email_body, e.email_tagline, e.email_design,
             coalesce((select json_agg(json_build_object('day_date', d.day_date, 'label', d.label, 'access', d.access, 'entry_fee', d.entry_fee) order by d.day_date)
                         from event_days d where d.event_id = e.id), '[]') as days
@@ -358,11 +359,13 @@ export async function sendAttendeeEmail(attendeeId: string, opts: { reason: Send
   };
 
   if (!looksLikeEmail(a.email)) return fail("Invalid email address.", false);
+  // Registered with two addresses: one message to both.
+  const to = a.alt_email && a.alt_email !== a.email && looksLikeEmail(a.alt_email) ? `${a.email}, ${a.alt_email}` : a.email;
 
   try {
     const png = await qrPng(a.qr_token);
     const msg = buildQrEmail(
-      a.email,
+      to,
       {
         fullName: a.full_name,
         eventName: a.event_name,
@@ -383,7 +386,7 @@ export async function sendAttendeeEmail(attendeeId: string, opts: { reason: Send
   }
 
   await query("update attendees set email_status = 'sent', email_error = null, email_sent_at = now(), email_attempts = 0 where id = $1", [a.id]);
-  await auditSafe({ staffId: opts.staffId, action: "email_sent", eventId: a.event_id, attendeeId: a.id, details: { reason: opts.reason, to: a.email, mode: emailMode() } });
+  await auditSafe({ staffId: opts.staffId, action: "email_sent", eventId: a.event_id, attendeeId: a.id, details: { reason: opts.reason, to, mode: emailMode() } });
   return { ok: true, email_status: "sent" };
 }
 

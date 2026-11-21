@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { POST as formPOST } from "@/app/api/form-submit/route";
 import { closePool, query } from "@/lib/db";
 import { buildQrEmail, deliveryGauge, devOutbox, drainEmailQueue } from "@/lib/email";
+import { cleanAttendeeFields, ingestFormSubmission } from "@/lib/attendees";
 import { makeEvent, req, uniq } from "./helpers";
 
 afterAll(() => closePool());
@@ -51,6 +52,22 @@ describe("email queue", () => {
     // With nothing pending, everyone finishes quickly; at most one ever held the lease at once,
     // and no run reports sends that another also reported.
     expect(results.reduce((s, r) => s + r.sent, 0)).toBe(0);
+  });
+});
+
+describe("second email address", () => {
+  it("someone with two addresses gets one email sent to both", async () => {
+    process.env.DEV_EMAIL_MODE = "log";
+    const ev = await makeEvent();
+    const [main, alt] = [`${uniq("two")}@example.com`, `${uniq("two-alt")}@example.com`];
+    await ingestFormSubmission(ev.id, uniq("r"), cleanAttendeeFields({ full_name: "Two Addresses", email: main }));
+    await query("update attendees set alt_email = $2 where email = $1", [main, alt]);
+    await drainEmailQueue();
+    const sent = devOutbox().filter((m) => m.to.includes(main));
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toBe(`${main}, ${alt}`);
+    const r = await query<{ email_status: string }>("select email_status from attendees where email = $1", [main]);
+    expect(r.rows[0].email_status).toBe("sent");
   });
 });
 
