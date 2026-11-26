@@ -81,8 +81,8 @@ export async function addPerson(body: Record<string, unknown>): Promise<AddRespo
 }
 
 /**
- * After a check-in: "Not in a team" with Add to Team / Later. Opens the picker.
- * `onFinished(message)` runs when the popup closes (message = what happened, or null for Later).
+ * After a check-in: "Not in a team" with Add to Team / Cancel. Opens the picker.
+ * `onFinished(message)` runs when the popup closes (message = what happened, or null for Cancel).
  */
 export function TeamAsk({ eventId, person, onFinished }: { eventId: string; person: TeamPerson | null; onFinished: (message: string | null) => void }) {
   const [picking, setPicking] = useState(false);
@@ -92,7 +92,6 @@ export function TeamAsk({ eventId, person, onFinished }: { eventId: string; pers
   return (
     <Sheet open onClose={() => onFinished(null)} title={person.name} message="Not in a team yet.">
       <SheetAction onClick={() => setPicking(true)}>Add to Team</SheetAction>
-      <SheetAction onClick={() => onFinished(null)}>Later</SheetAction>
     </Sheet>
   );
 }
@@ -235,12 +234,12 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
         open={ask?.kind === "similar"}
         onClose={() => setAsk(null)}
         title={ask?.kind === "similar" ? `“${ask.name}” looks like an existing team` : undefined}
-        message="Same team? Use it instead of making a second one."
+        message="Same team? Use it instead of making a second one (a full team can't take more)."
       >
         {ask?.kind === "similar" &&
           ask.suggestions.map((s) => (
-            <SheetAction key={s.id} disabled={busy} onClick={() => { setAsk(null); void send({ team_id: s.id, label: s.name }); }}>
-              Add to {s.name} ({s.count}/{max})
+            <SheetAction key={s.id} disabled={busy || s.count >= max} onClick={() => { setAsk(null); void send({ team_id: s.id, label: s.name }); }}>
+              {s.count >= max ? `${s.name} is full (${s.count}/${max})` : `Add to ${s.name} (${s.count}/${max})`}
             </SheetAction>
           ))}
         {ask?.kind === "similar" && (
