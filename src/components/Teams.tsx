@@ -110,6 +110,7 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
     | { kind: "other"; target: { team_id?: string; new_name?: string; force?: boolean; reserved_id?: string; label: string }; current: string }
     | null
   >(null);
+  const [swapWith, setSwapWith] = useState<BoardTeam | null>(null);
   const max = board?.settings.team_max ?? 4;
 
   const current = useMemo(() => board?.teams.find((t) => t.members.some((m) => m.attendee_id === person.attendee_id)) ?? null, [board, person.attendee_id]);
@@ -145,6 +146,22 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
       await reload();
     } catch (e) {
       setMsg({ tone: "error", text: errorMessage(e) });
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Both teams full (or anyway): trade places with someone from the other team, in one step. */
+  const swap = async (other: BoardMember, team: BoardTeam) => {
+    setBusy(true);
+    setMsg(null);
+    setSwapWith(null);
+    try {
+      const r = await api<{ ok: boolean; message: string }>("/api/teams/swap", { body: { event_id: eventId, attendee_a: person.attendee_id, attendee_b: other.attendee_id } });
+      onClose(`Swapped: ${r.message}`);
+    } catch (e) {
+      setMsg({ tone: "error", text: `${errorMessage(e)} (${team.name})` });
       await reload();
     } finally {
       setBusy(false);
@@ -206,7 +223,7 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
               const full = t.count >= max;
               const mine = current?.id === t.id;
               return (
-                <li key={t.id} className={`flex items-center gap-3 px-4 py-3 ${i ? "border-t border-sep/60" : ""} ${full && !mine ? "opacity-50" : ""}`}>
+                <li key={t.id} className={`flex items-center gap-3 px-4 py-3 ${i ? "border-t border-sep/60" : ""} ${full && !mine && !current ? "opacity-50" : ""}`}>
                   <span className="min-w-0 flex-1">
                     <span className="block t-headline">{t.name}</span>
                     <span className="block t-footnote text-label2">
@@ -216,6 +233,10 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
                   </span>
                   {mine ? (
                     <span className="t-footnote font-semibold text-sys-green">Their team</span>
+                  ) : full && current ? (
+                    <Button size="small" variant="gray" disabled={busy} onClick={() => setSwapWith(t)}>
+                      Swap
+                    </Button>
                   ) : full ? (
                     <span className="t-footnote font-semibold text-label2">Full</span>
                   ) : (
@@ -247,6 +268,21 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
             No, create “{ask.name}”
           </SheetAction>
         )}
+      </Sheet>
+      <Sheet
+        open={!!swapWith}
+        onClose={() => setSwapWith(null)}
+        title={swapWith ? `${swapWith.name} is full. Swap ${person.name} with:` : undefined}
+        message={current ? `They go to ${current.name}; ${person.name} takes their place.` : undefined}
+      >
+        {swapWith?.members
+          .filter((m) => m.attendee_id)
+          .map((m) => (
+            <SheetAction key={m.member_id} disabled={busy} onClick={() => void swap(m, swapWith)}>
+              {m.name}
+              {m.here ? "" : " (not here)"}
+            </SheetAction>
+          ))}
       </Sheet>
       <Sheet open={ask?.kind === "other"} onClose={() => setAsk(null)} title={ask?.kind === "other" ? `${person.name} is already in ${ask.current}` : undefined} message="Move them? They leave their current team.">
         {ask?.kind === "other" && (

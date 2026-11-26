@@ -7,7 +7,7 @@ import { GET as csvGET } from "@/app/api/events/[id]/teams.csv/route";
 import { GET as boardGET } from "@/app/api/events/[id]/teams/route";
 import { checkInAttendee, undoCheckin } from "@/lib/checkin";
 import { cleanAttendeeFields, ingestFormSubmission } from "@/lib/attendees";
-import { addToTeam, removeFromTeam, renameTeam, similarTeam, teamBoard } from "@/lib/teams";
+import { addToTeam, removeFromTeam, renameTeam, similarTeam, swapMembers, teamBoard } from "@/lib/teams";
 import { closePool, query } from "@/lib/db";
 import { body, cookieFor, makeEvent, makeStaff, params, req, tokenOf, uniq } from "./helpers";
 import type { Staff } from "@/lib/auth";
@@ -119,6 +119,33 @@ describe("adding people to teams", () => {
     expect(rs.map((r) => r.status)).toEqual(["OK", "OK"]);
     expect((await teamOf(a.id)).name).toBe("Swap Two");
     expect((await teamOf(c.id)).name).toBe("Swap One");
+  });
+
+  it("swap between two FULL teams in one step; a reserved spot stays with its team; parallel swaps don't deadlock", async () => {
+    const ev = await makeEvent();
+    const ps = await people(ev.id, 8);
+    const t1 = await newTeam(ev.id, ps[0].id, "Full One");
+    for (const p of ps.slice(1, 3)) await addToTeam(hr, { eventId: ev.id, attendeeId: p.id, teamId: t1 });
+    const spot = (await query<{ id: string }>("insert into team_members (team_id, reserved_name, source) values ($1, 'Reserved Name', 'sheet') returning id", [t1])).rows[0].id;
+    await addToTeam(hr, { eventId: ev.id, attendeeId: ps[3].id, teamId: t1, reservedId: spot }); // ps[3] holds the reserved spot
+    const t2 = await newTeam(ev.id, ps[4].id, "Full Two");
+    for (const p of ps.slice(5, 8)) await addToTeam(hr, { eventId: ev.id, attendeeId: p.id, teamId: t2 });
+    expect(await addToTeam(hr, { eventId: ev.id, attendeeId: ps[0].id, teamId: t2, move: true })).toMatchObject({ status: "FULL" });
+
+    await swapMembers(hr, { eventId: ev.id, attendeeA: ps[3].id, attendeeB: ps[4].id });
+    expect(await teamOf(ps[3].id)).toEqual({ name: "Full Two", team_name: "Full Two" });
+    expect(await teamOf(ps[4].id)).toEqual({ name: "Full One", team_name: "Full One" });
+    // The reserved spot stayed in Full One (now held by ps[4]).
+    expect((await query<{ team_id: string; attendee_id: string }>("select team_id, attendee_id from team_members where reserved_name = 'Reserved Name'", [])).rows[0]).toEqual({ team_id: t1, attendee_id: ps[4].id });
+
+    const rs = await Promise.allSettled([
+      swapMembers(hr, { eventId: ev.id, attendeeA: ps[0].id, attendeeB: ps[5].id }),
+      swapMembers(hr2, { eventId: ev.id, attendeeA: ps[6].id, attendeeB: ps[1].id }),
+    ]);
+    expect(rs.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    const sizes = (await query<{ n: number }>("select count(*)::int n from team_members where team_id = any($1::uuid[]) group by team_id", [[t1, t2]])).rows.map((r) => r.n);
+    expect(sizes).toEqual([4, 4]);
+    expect((await query("select attendee_id from team_members where attendee_id is not null group by 1 having count(*) > 1")).rowCount).toBe(0);
   });
 
   it("rename: everyone's team name follows; a name already taken is refused", async () => {

@@ -226,6 +226,48 @@ export async function addToTeam(
   }
 }
 
+/**
+ * Two people trade places (e.g. both teams are full). One transaction: each takes
+ * the other's spot; a reserved/sheet spot stays with its team.
+ */
+export async function swapMembers(staff: Staff, p: { eventId: string; attendeeA: string; attendeeB: string }) {
+  if (p.attendeeA === p.attendeeB) throw new HttpError(400, "BAD_REQUEST", "Pick two different people.");
+  return withTransaction(async (c) => {
+    type M = { id: string; team_id: string; team: string; attendee_id: string; full_name: string };
+    const load = async () =>
+      (await c.query<M>(
+        `select m.id, m.team_id, t.name as team, m.attendee_id, a.full_name
+           from team_members m join teams t on t.id = m.team_id join attendees a on a.id = m.attendee_id
+          where m.attendee_id = any($1::uuid[]) and t.event_id = $2`,
+        [[p.attendeeA, p.attendeeB], p.eventId],
+      )).rows;
+    let rows = await load();
+    if (rows.length !== 2) throw new HttpError(409, "NOT_BOTH_IN_TEAMS", "Both people must be in a team to swap.");
+    await lockTeams(c, rows.map((r) => r.team_id));
+    rows = await load(); // again, under the locks
+    const a = rows.find((r) => r.attendee_id === p.attendeeA);
+    const b = rows.find((r) => r.attendee_id === p.attendeeB);
+    if (!a || !b) throw new HttpError(409, "CHANGED", "Someone just changed teams. Try again.");
+    if (a.team_id === b.team_id) throw new HttpError(409, "SAME_TEAM", "They're already in the same team.");
+    // Swap the people on the two spots (park B for a moment: one team per person holds at every step).
+    const parked = (await c.query<{ reserved_name: string | null }>("select reserved_name from team_members where id = $1", [b.id])).rows[0];
+    await c.query("delete from team_members where id = $1", [b.id]);
+    await c.query(
+      "update team_members set attendee_id = $2, source = 'door', added_at = now(), claimed_at = case when reserved_name is null then null else now() end, added_by_staff_id = $3 where id = $1",
+      [a.id, p.attendeeB, staff.id],
+    );
+    await c.query(
+      "insert into team_members (id, team_id, attendee_id, reserved_name, source, added_by_staff_id, claimed_at) values ($1, $2, $3, $4, 'door', $5, case when $4::text is null then null else now() end)",
+      [b.id, b.team_id, p.attendeeA, parked.reserved_name, staff.id],
+    );
+    await c.query("update attendees set team_name = $2, updated_at = now() where id = $1", [p.attendeeA, b.team]);
+    await c.query("update attendees set team_name = $2, updated_at = now() where id = $1", [p.attendeeB, a.team]);
+    for (const [who, from, to] of [[a, a.team, b.team], [b, b.team, a.team]] as const)
+      await audit({ staffId: staff.id, action: "team_move", eventId: p.eventId, attendeeId: who.attendee_id, details: { from, team: to, swap: true } }, c);
+    return { ok: true, message: `${a.full_name} → ${b.team}, ${b.full_name} → ${a.team}` };
+  });
+}
+
 /** Remove a member. A claimed reserved spot goes back to "reserved"; removing a reserved spot frees it. */
 export async function removeFromTeam(staff: Staff, memberId: string) {
   return withTransaction(async (c) => {
