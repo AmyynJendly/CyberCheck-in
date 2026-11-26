@@ -41,7 +41,14 @@ export type AuditAction =
   | "claim_member"
   | "confirm_member"
   | "reject_member"
-  | "import_stand_sheet";
+  | "import_stand_sheet"
+  | "team_create"
+  | "team_add"
+  | "team_move"
+  | "team_remove"
+  | "team_rename"
+  | "team_delete"
+  | "import_teams";
 
 export interface AuditEntry {
   staffId?: string | null;

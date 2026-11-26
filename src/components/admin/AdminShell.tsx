@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { Banknote, CalendarDays, ChevronLeft, IdCard, LayoutDashboard, Mail, ScrollText, UserCog, Users } from "lucide-react";
+import { Banknote, CalendarDays, ChevronLeft, IdCard, LayoutDashboard, Mail, ScrollText, UserCog, Users, UsersRound } from "lucide-react";
 import { useApp } from "../AppContext";
 import { MenuSelect, OfflineBanner } from "../ui";
 
@@ -13,6 +13,7 @@ const NAV = [
   { href: "/admin/cash", label: "Cash", Icon: Banknote },
   { href: "/admin/emails", label: "Emails", Icon: Mail },
   { href: "/admin/members", label: "Members", Icon: IdCard },
+  { href: "/admin/teams", label: "Teams", Icon: UsersRound },
   { href: "/admin/activity", label: "Activity", Icon: ScrollText },
   { href: "/admin/staff", label: "Staff", Icon: UserCog },
   { href: "/admin/events", label: "Events", Icon: CalendarDays },

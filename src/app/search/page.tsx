@@ -8,6 +8,7 @@ import { api, errorMessage } from "@/components/api";
 import { Button, NeedEvent, Notice, Page, Row as ListRow, SearchField, Section, Sheet, Spinner, TextField, fmtTime } from "@/components/ui";
 import { MemberBadge, PaymentChoices } from "@/components/Payment";
 import { fmtDT, type DoorChoice, type PaymentKind, type PaymentOption } from "@/components/types";
+import { TeamAsk, TeamPicker, type TeamPerson } from "@/components/Teams";
 
 interface Row {
   id: string;
@@ -57,6 +58,10 @@ function SearchInner() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [payFor, setPayFor] = useState<Record<string, PaymentOption[]>>({});
   const [linking, setLinking] = useState<Row | null>(null);
+  const [teamAsk, setTeamAsk] = useState<TeamPerson | null>(null);
+  const [picking, setPicking] = useState<{ person: TeamPerson; move: boolean } | null>(null);
+  // Team buttons on the CTF day (or whenever the admin turned the team question on).
+  const teamsOn = !!event && (event.team_prompt || activeDay?.access === "members_or_fee");
   const seq = useRef(0);
   const paidEvent = !!event?.days.some((d) => d.access !== "free");
 
@@ -93,7 +98,7 @@ function SearchInner() {
     if (!event) return;
     setBusyId(row.id);
     try {
-      const r = await api<{ status: string; checked_at?: string; by_staff_name?: string; day_label?: string; options?: PaymentOption[] }>("/api/checkin/manual", {
+      const r = await api<{ status: string; checked_at?: string; by_staff_name?: string; day_label?: string; options?: PaymentOption[]; ask_team?: boolean }>("/api/checkin/manual", {
         body: { attendee_id: row.id, event_id: event.id, ...dayParam },
       });
       if (r.status === "PAYMENT_REQUIRED" && r.options) {
@@ -104,6 +109,7 @@ function SearchInner() {
         });
         return;
       }
+      if (r.ask_team) setTeamAsk({ attendee_id: row.id, name: row.full_name });
       if (r.status === "OK") setMsg(row.id, { tone: "ok", text: `Checked in for ${r.day_label}.` });
       else if (r.status === "ALREADY_CHECKED_IN") setMsg(row.id, { tone: "warn", text: `Already checked in at ${fmtTime(r.checked_at)} by ${r.by_staff_name}.` });
       else if (r.status === "NO_EVENT_DAY") setMsg(row.id, { tone: "error", text: "No event day today." });
@@ -121,11 +127,12 @@ function SearchInner() {
     if (!event) return;
     setBusyId(row.id);
     try {
-      const r = await api<{ status: string; day_label?: string; payment?: { kind: PaymentKind; amount: number } | null; claimed?: boolean; checked_at?: string; by_staff_name?: string }>(
+      const r = await api<{ status: string; day_label?: string; payment?: { kind: PaymentKind; amount: number } | null; claimed?: boolean; checked_at?: string; by_staff_name?: string; ask_team?: boolean }>(
         "/api/checkin/pay",
         { body: { attendee_id: row.id, event_id: event.id, kind, method: "manual", ...dayParam } },
       );
       setPayFor(({ [row.id]: _, ...rest }) => rest);
+      if (r.ask_team) setTeamAsk({ attendee_id: row.id, name: row.full_name });
       if (r.status === "OK")
         setMsg(row.id, {
           tone: "ok",
@@ -249,6 +256,11 @@ function SearchInner() {
                 >
                   {r.email ? "Fix Email" : "Add Email"}
                 </Button>
+                {teamsOn && (
+                  <Button variant="gray" onClick={() => setPicking({ person: { attendee_id: r.id, name: r.full_name }, move: !!r.team_name })}>
+                    {r.team_name ? "Change Team" : "Add to Team"}
+                  </Button>
+                )}
                 {paidEvent && !r.member_id && (
                   <Button variant="gray" onClick={() => setLinking(r)}>
                     Member? Find on List
@@ -287,6 +299,27 @@ function SearchInner() {
           );
         })}
       </div>
+      <TeamAsk
+        eventId={event.id}
+        person={teamAsk}
+        onFinished={(m) => {
+          if (m && teamAsk) setMsg(teamAsk.attendee_id, { tone: "ok", text: m });
+          setTeamAsk(null);
+          void runSearch(q);
+        }}
+      />
+      {picking && (
+        <TeamPicker
+          eventId={event.id}
+          person={picking.person}
+          move={picking.move}
+          onClose={(m) => {
+            if (m) setMsg(picking.person.attendee_id, { tone: "ok", text: m });
+            setPicking(null);
+            void runSearch(q);
+          }}
+        />
+      )}
       <LinkMemberSheet
         row={linking}
         onClose={() => setLinking(null)}

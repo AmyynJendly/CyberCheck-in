@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, History, LayoutDashboard, ScanLine, Search, UserPlus } from "lucide-react";
+import { Check, History, LayoutDashboard, ScanLine, Search, UserPlus, UsersRound } from "lucide-react";
 import { useApp } from "@/components/AppContext";
 import { api } from "@/components/api";
 import { useStats } from "@/components/useStats";
@@ -155,6 +155,17 @@ export default function Home() {
                 }
                 title="My Check-ins"
                 subtitle="Undo a mistake (10 min)"
+                chevron
+              />
+              <Row
+                href="/teams"
+                icon={
+                  <IconTile color="bg-sys-indigo">
+                    <UsersRound className={ic} strokeWidth={2.4} />
+                  </IconTile>
+                }
+                title="Teams"
+                subtitle="CTF teams, free spots, who has no team"
                 chevron
               />
             </Section>

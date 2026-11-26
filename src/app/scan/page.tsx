@@ -13,10 +13,15 @@ import { PaymentChoices } from "@/components/Payment";
 import { accessLabel, fmtDT, type DoorChoice, type PaymentKind, type PaymentOption } from "@/components/types";
 import { haptic } from "@/components/haptics";
 import { startQrScanner, type QrScanner } from "@/components/qrScanner";
+import { TeamAsk, type TeamPerson } from "@/components/Teams";
 
+type TeamInfo = { name: string; count: number; here: number; max: number } | null;
 type Result =
   | {
       status: "OK";
+      attendee_id?: string;
+      team?: TeamInfo;
+      ask_team?: boolean;
       name: string;
       team_name: string | null;
       class_year: string | null;
@@ -35,7 +40,7 @@ type Result =
       day_label: string;
       options: PaymentOption[];
     }
-  | { status: "ALREADY_CHECKED_IN"; name: string; checked_at: string; by_staff_name: string }
+  | { status: "ALREADY_CHECKED_IN"; attendee_id?: string; team?: TeamInfo; ask_team?: boolean; name: string; checked_at: string; by_staff_name: string }
   | { status: "WRONG_EVENT"; name: string; other_event_name: string }
   | { status: "FULL"; name: string; day_label: string; capacity: number; checked_in: number }
   | { status: "INVALID" }
@@ -84,6 +89,9 @@ export default function ScanPage() {
   const dayParam = useDayParam();
   const { stats, reload } = useStats(event?.id, dayParam.event_day_id, 10_000);
   const [result, setResult] = useState<Result | null>(null);
+  // CTF day: after the green screen, "Not in a team" for people without one.
+  const [teamAsk, setTeamAsk] = useState<TeamPerson | null>(null);
+  const pendingTeam = useRef<TeamPerson | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraKey, setCameraKey] = useState(0);
@@ -104,6 +112,15 @@ export default function ScanPage() {
 
   useEffect(() => setLocalCount(0), [stats]);
 
+  /** The result screen goes away: next scan, or first the team question. */
+  const afterResult = useCallback(() => {
+    setResult(null);
+    if (pendingTeam.current) {
+      setTeamAsk(pendingTeam.current); // scanning stays paused until the team question is answered
+      pendingTeam.current = null;
+    } else busy.current = false;
+  }, []);
+
   const show = useCallback((r: Result) => {
     setResult(r);
     setChecking(false);
@@ -115,12 +132,10 @@ export default function ScanPage() {
     }
     setRecent((cur) => [{ id: ++seq.current, at: Date.now(), ...summarize(r) }, ...cur].slice(0, 3));
     haptic(r.status === "OK" ? "ok" : r.status === "ALREADY_CHECKED_IN" ? "warn" : "bad");
+    pendingTeam.current = (r.status === "OK" || r.status === "ALREADY_CHECKED_IN") && r.ask_team && r.attendee_id ? { attendee_id: r.attendee_id, name: r.name } : null;
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => {
-      setResult(null);
-      busy.current = false;
-    }, RESULT_MS);
-  }, []);
+    hideTimer.current = setTimeout(() => afterResult(), RESULT_MS);
+  }, [afterResult]);
 
   const onScan = useCallback(
     async (text: string) => {
@@ -240,7 +255,7 @@ export default function ScanPage() {
   }, [canScan, cameraKey]);
 
   // No decoding while a result is on screen.
-  useEffect(() => scannerRef.current?.setPaused(!!result), [result, cameraOn]);
+  useEffect(() => scannerRef.current?.setPaused(!!result || !!teamAsk), [result, teamAsk, cameraOn]);
 
   const toggleTorch = async () => {
     const on = !torch.on;
@@ -261,7 +276,12 @@ export default function ScanPage() {
   const isFull = seatCap !== null && checkedIn !== null && checkedIn >= seatCap;
   const dismiss = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    setResult(null);
+    afterResult();
+  };
+  const teamDone = (message: string | null) => {
+    setTeamAsk(null);
+    if (message) setRecent((cur) => [{ id: ++seq.current, at: Date.now(), tone: "ok" as const, title: message, detail: "Team" }, ...cur].slice(0, 3));
+    last.current = { text: "", at: 0 };
     busy.current = false;
   };
 
@@ -406,6 +426,7 @@ export default function ScanPage() {
       ) : (
         result && <ResultOverlay result={result} onClose={dismiss} />
       )}
+      {event && <TeamAsk eventId={event.id} person={teamAsk} onFinished={teamDone} />}
     </div>
   );
 }
@@ -423,7 +444,8 @@ function ResultOverlay({ result, onClose }: { result: Result; onClose: () => voi
       title = "Welcome";
       name = result.name;
       lines = [
-        [result.team_name, result.class_year].filter(Boolean).join(" · "),
+        result.team ? `Team ${result.team.name} · ${result.team.here} of ${result.team.max} here` : result.ask_team ? "No team yet" : "",
+        [result.team ? null : result.team_name, result.class_year].filter(Boolean).join(" · "),
         result.payment
           ? `Paid ${fmtDT(result.payment.amount)} · ${result.payment.kind === "membership" ? "now a member" : "entry only"}`
           : result.claimed
@@ -439,7 +461,7 @@ function ResultOverlay({ result, onClose }: { result: Result; onClose: () => voi
       Icon = CircleAlert;
       title = "Already Checked In";
       name = result.name;
-      lines = [`at ${fmtTime(result.checked_at)} by ${result.by_staff_name}`];
+      lines = [`at ${fmtTime(result.checked_at)} by ${result.by_staff_name}`, result.team ? `Team ${result.team.name}` : result.ask_team ? "No team yet" : ""];
       break;
     case "FULL":
       title = "Session Full";

@@ -23,6 +23,7 @@ import { HttpError } from "./http";
 import { normalizeToken } from "./qr-format";
 import { dayLabel, type DayRow } from "./events";
 import { grantMembershipTx } from "./members";
+import { teamsOnUndo } from "./teams";
 import { tunisDate } from "./time";
 import type { Staff } from "./auth";
 
@@ -488,6 +489,9 @@ export async function undoCheckin(opts: { checkinId: string; staff: Staff }) {
       [row.id],
     );
     if (restored.rows.length) removed.rows.push(...restored.rows);
+    // Teams: put in a team at the door after this check-in (and not here another day) → out of the team.
+    // Spots from the team sheet stay: they're just "not here" again.
+    const teamLeft = await teamsOnUndo(c, row.id, opts.staff, row.event_id);
     const refund = voided.rows.reduce((s, p) => s + Number(p.amount), 0);
     // Added at the door (Add Person) and this was their only check-in, with no QR email
     // sent yet: it was a mistake, so remove the person too (else their email would go out).
@@ -543,6 +547,7 @@ export async function undoCheckin(opts: { checkinId: string; staff: Staff }) {
       refund,
       membership_removed: removed.rows.length > 0,
       person_removed: personRemoved,
+      team_left: teamLeft,
     };
   });
 }

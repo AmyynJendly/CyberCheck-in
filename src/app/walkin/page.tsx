@@ -9,10 +9,14 @@ import { DayPicker } from "@/components/DayPicker";
 import { Button, FieldRow, NeedEvent, Notice, Page, Section, Sheet, TextField } from "@/components/ui";
 import { MemberBadge, PaymentChoices } from "@/components/Payment";
 import { accessLabel, fmtDT, type DoorChoice, type PaymentKind, type PaymentOption } from "@/components/types";
+import { TeamAsk, type TeamPerson } from "@/components/Teams";
 
 type WalkInResult =
   | {
       status: "OK";
+      attendee_id: string;
+      ask_team?: boolean;
+      team?: { name: string } | null;
       name: string;
       short_code: string;
       day_label: string;
@@ -38,6 +42,8 @@ export default function WalkInPage() {
   const [lastEmail, setLastEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<PaymentOption[] | null>(null);
+  const [teamAsk, setTeamAsk] = useState<TeamPerson | null>(null);
+  const [teamMsg, setTeamMsg] = useState<string | null>(null);
 
   const set = (k: keyof typeof EMPTY) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -55,8 +61,10 @@ export default function WalkInPage() {
       setOptions(null);
       setResult(r);
       setLastEmail(form.email);
+      setTeamMsg(null);
       if (r.status === "OK") {
         setForm(EMPTY);
+        if (r.ask_team) setTeamAsk({ attendee_id: r.attendee_id, name: r.name });
         try {
           navigator.vibrate?.(120);
         } catch {}
@@ -101,7 +109,8 @@ export default function WalkInPage() {
                 <p className="t-subhead mt-2 text-label2">
                   Backup code <span className="ml-1 font-mono text-[17px] font-semibold tracking-[0.14em] text-label">{result.short_code}</span>
                 </p>
-                {result.email_queued && <p className="t-footnote mt-1 text-label2">Their QR email goes out when the admin sends the waiting emails.</p>}
+                {result.email_queued && <p className="t-footnote mt-1 text-label2">Their QR email goes out with the next send (automatic when Auto-send is on).</p>}
+                {teamMsg && <p className="t-subhead mt-2 font-semibold text-sys-green">{teamMsg}</p>}
               </div>
             </div>
           )}
@@ -151,6 +160,14 @@ export default function WalkInPage() {
               {options && <PaymentChoices options={options} busy={busy} onPay={(k) => send(k)} onCancel={() => setOptions(null)} />}
             </div>
           </Sheet>
+          <TeamAsk
+            eventId={event.id}
+            person={teamAsk}
+            onFinished={(m) => {
+              setTeamMsg(m);
+              setTeamAsk(null);
+            }}
+          />
         </>
       )}
     </Page>

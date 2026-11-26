@@ -126,6 +126,13 @@ export async function updateEvent(staff: Staff, id: string, body: Record<string,
     if (!Number.isInteger(every) || every < 1 || every > 1440) throw new HttpError(400, "BAD_INTERVAL", "Auto-send interval must be 1 to 1440 minutes.");
     add("email_auto_every", every);
   }
+  if (body.team_max !== undefined) {
+    const max = Number(body.team_max);
+    if (!Number.isInteger(max) || max < 1 || max > 20) throw new HttpError(400, "BAD_TEAM_MAX", "Team size must be 1 to 20.");
+    add("team_max", max);
+  }
+  if (body.team_small_ok !== undefined) add("team_small_ok", body.team_small_ok === true);
+  if (body.team_prompt !== undefined) add("team_prompt", body.team_prompt === true);
   if (body.email_tagline !== undefined) add("email_tagline", typeof body.email_tagline === "string" && body.email_tagline.trim() ? body.email_tagline.trim().slice(0, 120) : null);
   const regenerate = body.regenerate_secret === true;
   if (regenerate) {

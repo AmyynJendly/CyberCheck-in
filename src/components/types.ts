@@ -19,6 +19,9 @@ export interface EventInfo {
   name: string;
   location: string | null;
   membership_fee: number;
+  team_max: number;
+  team_small_ok: boolean;
+  team_prompt: boolean;
   days: DayInfo[];
   today_day_id: string | null;
 }

@@ -16,9 +16,12 @@ export const GET = route(async (req) => {
     name: string;
     location: string | null;
     membership_fee: number;
+    team_max: number;
+    team_small_ok: boolean;
+    team_prompt: boolean;
     days: { id: string; day_date: string; label: string | null; access: string; entry_fee: number }[];
   }>(
-    `select e.id, e.slug, e.name, e.location, e.membership_fee,
+    `select e.id, e.slug, e.name, e.location, e.membership_fee, e.team_max, e.team_small_ok, e.team_prompt,
             coalesce(json_agg(json_build_object('id', d.id, 'day_date', d.day_date, 'label', d.label,
                                                 'access', d.access, 'entry_fee', d.entry_fee, 'capacity', d.capacity)
                               order by d.day_date) filter (where d.id is not null), '[]') as days
