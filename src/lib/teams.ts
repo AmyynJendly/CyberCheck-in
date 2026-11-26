@@ -48,6 +48,7 @@ export interface BoardMember {
 export interface BoardTeam {
   id: string;
   name: string;
+  closed: boolean;
   count: number;
   here: number;
   members: BoardMember[];
@@ -64,7 +65,7 @@ export async function teamBoard(eventId: string, dayId: string | null) {
   const s = await settings(eventId);
   const day = await boardDay(eventId, dayId);
   const teams = await query<BoardTeam>(
-    `select t.id, t.name,
+    `select t.id, t.name, t.closed,
             count(m.id)::int as count,
             count(ci.id)::int as here,
             coalesce(json_agg(json_build_object(
@@ -96,7 +97,7 @@ export async function teamBoard(eventId: string, dayId: string | null) {
 }
 
 type AddResult =
-  | { status: "OK"; team: { id: string; name: string; count: number; max: number }; moved_from?: string | null; created?: boolean }
+  | { status: "OK"; team: { id: string; name: string; count: number; max: number; closed: boolean }; moved_from?: string | null; created?: boolean }
   | { status: "ALREADY_IN_TEAM"; team: { id: string; name: string } }
   | { status: "IN_OTHER_TEAM"; team: { id: string; name: string } }
   | { status: "FULL"; team: { id: string; name: string; count: number; max: number } }
@@ -129,7 +130,7 @@ async function dropEmptyTeams(c: PoolClient, ids: (string | null | undefined)[],
  */
 export async function addToTeam(
   staff: Staff,
-  p: { eventId: string; attendeeId: string; teamId?: string | null; newName?: unknown; force?: boolean; move?: boolean; reservedId?: string | null },
+  p: { eventId: string; attendeeId: string; teamId?: string | null; newName?: unknown; closed?: boolean; force?: boolean; move?: boolean; reservedId?: string | null },
 ): Promise<AddResult> {
   try {
     return await withTransaction(async (c) => {
@@ -155,13 +156,13 @@ export async function addToTeam(
           const similar = all.filter((t) => similarTeam(t.name, name));
           if (similar.length && !p.force) return { status: "SIMILAR", name, suggestions: similar.map(({ id, name: n, count }) => ({ id, name: n, count })) };
           const ins = await c.query<{ id: string }>(
-            "insert into teams (event_id, name, name_key, created_by_staff_id) values ($1, $2, $3, $4) on conflict (event_id, name_key) do nothing returning id",
-            [p.eventId, name, key, staff.id],
+            "insert into teams (event_id, name, name_key, created_by_staff_id, closed) values ($1, $2, $3, $4, $5) on conflict (event_id, name_key) do nothing returning id",
+            [p.eventId, name, key, staff.id, p.closed === true],
           );
           if (ins.rows[0]) {
             teamId = ins.rows[0].id;
             created = true;
-            await audit({ staffId: staff.id, action: "team_create", eventId: p.eventId, details: { team_id: teamId, name } }, c);
+            await audit({ staffId: staff.id, action: "team_create", eventId: p.eventId, details: { team_id: teamId, name, ...(p.closed === true ? { closed: true } : {}) } }, c);
           } else {
             teamId = (await c.query<{ id: string }>("select id from teams where event_id = $1 and name_key = $2", [p.eventId, key])).rows[0].id; // created by another phone just now
           }
@@ -170,10 +171,10 @@ export async function addToTeam(
 
       const current = (await c.query<{ id: string; team_id: string; reserved_name: string | null }>("select id, team_id, reserved_name from team_members where attendee_id = $1", [a.id])).rows[0];
       await lockTeams(c, [teamId, current?.team_id].filter(Boolean) as string[]);
-      const team = (await c.query<{ id: string; name: string }>("select id, name from teams where id = $1 and event_id = $2", [teamId, p.eventId])).rows[0];
+      const team = (await c.query<{ id: string; name: string; closed: boolean }>("select id, name, closed from teams where id = $1 and event_id = $2", [teamId, p.eventId])).rows[0];
       if (!team) throw new HttpError(404, "TEAM_NOT_FOUND", "That team doesn't exist any more.");
 
-      if (current?.team_id === team.id) return { status: "ALREADY_IN_TEAM", team };
+      if (current?.team_id === team.id) return { status: "ALREADY_IN_TEAM", team: { id: team.id, name: team.name } };
       if (current && !p.move) {
         const other = (await c.query<{ id: string; name: string }>("select id, name from teams where id = $1", [current.team_id])).rows[0];
         return { status: "IN_OTHER_TEAM", team: other };
@@ -184,7 +185,7 @@ export async function addToTeam(
       if (p.reservedId) {
         const spot = await c.query("select 1 from team_members where id = $1 and team_id = $2 and attendee_id is null", [p.reservedId, team.id]);
         if (!spot.rowCount) throw new HttpError(409, "SPOT_TAKEN", "That reserved spot was just given to someone else.");
-      } else if (count >= s.team_max) return { status: "FULL", team: { ...team, count, max: s.team_max } };
+      } else if (count >= s.team_max) return { status: "FULL", team: { id: team.id, name: team.name, count, max: s.team_max } };
 
       // Leaving the old team first (move), so the one-team rule holds at every step.
       // A claimed reserved spot goes back to reserved. All of this is one transaction.
@@ -310,6 +311,19 @@ export async function renameTeam(staff: Staff, teamId: string, rawName: unknown)
   }
 }
 
+/** Open / closed ("we don't want anyone else"). Only a label: the size limit is unchanged. */
+export async function setTeamClosed(staff: Staff, teamId: string, closed: boolean) {
+  return withTransaction(async (c) => {
+    const t = (await c.query<{ event_id: string; name: string; closed: boolean }>("select event_id, name, closed from teams where id = $1 for update", [teamId])).rows[0];
+    if (!t) throw new HttpError(404, "TEAM_NOT_FOUND", "That team doesn't exist any more.");
+    if (t.closed !== closed) {
+      await c.query("update teams set closed = $2, updated_at = now() where id = $1", [teamId, closed]);
+      await audit({ staffId: staff.id, action: closed ? "team_close" : "team_open", eventId: t.event_id, details: { team_id: teamId, team: t.name } }, c);
+    }
+    return { ok: true, closed };
+  });
+}
+
 /**
  * Check-in results: add the person's team (and whether to ask for one).
  * Never breaks a check-in: on any error the result goes back unchanged.
@@ -317,10 +331,10 @@ export async function renameTeam(staff: Staff, teamId: string, rawName: unknown)
 export async function withTeam<T extends { status: string; attendee_id?: string; team_name?: string | null }>(eventId: string, result: T) {
   if ((result.status !== "OK" && result.status !== "ALREADY_CHECKED_IN") || !result.attendee_id) return result;
   try {
-    const r = await query<{ team_prompt: boolean; team_max: number; in_use: boolean; id: string | null; name: string | null; count: number | null; here: number | null }>(
+    const r = await query<{ team_prompt: boolean; team_max: number; in_use: boolean; id: string | null; name: string | null; closed: boolean | null; count: number | null; here: number | null }>(
       `select e.team_prompt, e.team_max,
               exists (select 1 from teams x where x.event_id = e.id) as in_use,
-              t.id, t.name,
+              t.id, t.name, t.closed,
               (select count(*)::int from team_members y where y.team_id = t.id) as count,
               (select count(*)::int from team_members y
                  join checkins ci on ci.attendee_id = y.attendee_id and ci.undone_at is null
@@ -334,7 +348,7 @@ export async function withTeam<T extends { status: string; attendee_id?: string;
     );
     const row = r.rows[0];
     if (!row) return result;
-    const team = row.id ? { id: row.id, name: row.name!, count: row.count ?? 0, here: row.here ?? 0, max: row.team_max } : null;
+    const team = row.id ? { id: row.id, name: row.name!, closed: !!row.closed, count: row.count ?? 0, here: row.here ?? 0, max: row.team_max } : null;
     return {
       ...result,
       ...(row.in_use ? { team_name: team?.name ?? null } : {}),
@@ -377,6 +391,7 @@ export async function teamsCsvRows(eventId: string) {
   const s = await settings(eventId);
   const r = await query<{
     team: string;
+    closed: boolean;
     count: number;
     here_count: number;
     name: string;
@@ -389,14 +404,14 @@ export async function teamsCsvRows(eventId: string) {
     source: string;
   }>(
     `with tm as (
-       select t.id, t.name, m.id as mid, m.attendee_id, m.reserved_name, m.source,
+       select t.id, t.name, t.closed, m.id as mid, m.attendee_id, m.reserved_name, m.source,
               count(*) over (partition by t.id)::int as count,
               count(ci.id) over (partition by t.id)::int as here_count,
               ci.id is not null as here
          from teams t join team_members m on m.team_id = t.id
          left join checkins ci on ci.attendee_id = m.attendee_id and ci.event_day_id = $2 and ci.undone_at is null
         where t.event_id = $1)
-     select tm.name as team, tm.count, tm.here_count,
+     select tm.name as team, tm.closed, tm.count, tm.here_count,
             coalesce(a.full_name, tm.reserved_name) as name, a.id is null as reserved, tm.here,
             a.email, a.phone, a.member_id is not null as member,
             (select string_agg(p.kind || ' ' || p.amount::text || ' DT', ', ') from payments p

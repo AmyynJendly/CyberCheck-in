@@ -47,6 +47,8 @@ export type AuditAction =
   | "team_move"
   | "team_remove"
   | "team_rename"
+  | "team_close"
+  | "team_open"
   | "team_delete"
   | "import_teams";
 

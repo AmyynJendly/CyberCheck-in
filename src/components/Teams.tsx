@@ -2,7 +2,7 @@
 
 // Teams (CTF day): the "Not in a team" popup, the team picker, and the board data hook.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, UsersRound, X } from "lucide-react";
+import { Lock, Plus, UsersRound, X } from "lucide-react";
 import { api, errorMessage } from "./api";
 import { useDayParam } from "./AppContext";
 import { Button, Notice, SearchField, Sheet, SheetAction, Spinner } from "./ui";
@@ -19,6 +19,7 @@ export interface BoardMember {
 export interface BoardTeam {
   id: string;
   name: string;
+  closed: boolean;
   count: number;
   here: number;
   members: BoardMember[];
@@ -106,8 +107,10 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "error" | "warn"; text: string } | null>(null);
   const [ask, setAsk] = useState<
-    | { kind: "similar"; name: string; suggestions: { id: string; name: string; count: number }[] }
-    | { kind: "other"; target: { team_id?: string; new_name?: string; force?: boolean; reserved_id?: string; label: string }; current: string }
+    | { kind: "similar"; name: string; closed: boolean; suggestions: { id: string; name: string; count: number }[] }
+    | { kind: "other"; target: Target; current: string }
+    | { kind: "create"; name: string }
+    | { kind: "closed"; team: BoardTeam }
     | null
   >(null);
   const [swapWith, setSwapWith] = useState<BoardTeam | null>(null);
@@ -129,19 +132,21 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
     const hits = term
       ? all.filter((t) => t.name.toLowerCase().includes(term.toLowerCase()) || similarTeam(t.name, term) || t.members.some((m) => m.name.toLowerCase().includes(term.toLowerCase())))
       : all;
-    return [...hits].sort((a, b) => Number(a.count >= max) - Number(b.count >= max) || a.name.localeCompare(b.name));
+    // Open teams with a free spot first, then closed teams, then full teams.
+    const rank = (t: BoardTeam) => (t.count >= max ? 2 : t.closed ? 1 : 0);
+    return [...hits].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   }, [board, term, max]);
   const exact = !!key && (board?.teams ?? []).some((t) => teamKey(t.name) === key);
 
-  const send = async (target: { team_id?: string; new_name?: string; force?: boolean; reserved_id?: string; label: string }, moveNow = move) => {
+  const send = async (target: Target, moveNow = move) => {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await addPerson({ event_id: eventId, attendee_id: person.attendee_id, team_id: target.team_id, new_name: target.new_name, force: target.force, reserved_id: target.reserved_id, move: moveNow });
+      const r = await addPerson({ event_id: eventId, attendee_id: person.attendee_id, team_id: target.team_id, new_name: target.new_name, closed: target.closed, force: target.force, reserved_id: target.reserved_id, move: moveNow });
       if (r.status === "OK") return onClose(`${person.name} → ${r.team.name} (${r.team.count}/${r.team.max})${r.moved_from ? `, moved from ${r.moved_from}` : ""}`);
       if (r.status === "ALREADY_IN_TEAM") return onClose(`${person.name} is already in ${r.team.name}`);
       if (r.status === "IN_OTHER_TEAM") return setAsk({ kind: "other", target, current: r.team.name });
-      if (r.status === "SIMILAR") return setAsk({ kind: "similar", name: r.name, suggestions: r.suggestions });
+      if (r.status === "SIMILAR") return setAsk({ kind: "similar", name: r.name, closed: !!target.closed, suggestions: r.suggestions });
       setMsg({ tone: "error", text: `${r.team.name} is full (${r.team.count}/${r.team.max}). Pick another team.` });
       await reload();
     } catch (e) {
@@ -203,7 +208,7 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
           <button
             type="button"
             disabled={busy}
-            onClick={() => send({ new_name: term, label: term })}
+            onClick={() => setAsk({ kind: "create", name: term })}
             className="flex w-full items-center gap-3 rounded-[14px] border border-dashed border-accent/60 px-4 py-3.5 text-left active:bg-accent/10 disabled:opacity-40"
           >
             <span className="grid h-8 w-8 place-items-center rounded-full bg-accent text-on-accent">
@@ -227,6 +232,7 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
                   <span className="min-w-0 flex-1">
                     <span className="block t-headline">{t.name}</span>
                     <span className="block t-footnote text-label2">
+                      {t.closed && <ClosedTag />}
                       {teamLine(t, max)}
                       {t.members.length > 0 && ` · ${t.members.map((m) => (m.attendee_id ? m.name : `${m.name} (reserved)`)).join(", ")}`}
                     </span>
@@ -240,7 +246,7 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
                   ) : full ? (
                     <span className="t-footnote font-semibold text-label2">Full</span>
                   ) : (
-                    <Button size="small" disabled={busy} onClick={() => send({ team_id: t.id, label: t.name })}>
+                    <Button size="small" variant={t.closed ? "gray" : "filled"} disabled={busy} onClick={() => (t.closed ? setAsk({ kind: "closed", team: t }) : send({ team_id: t.id, label: t.name }))}>
                       Add
                     </Button>
                   )}
@@ -264,8 +270,37 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
             </SheetAction>
           ))}
         {ask?.kind === "similar" && (
-          <SheetAction disabled={busy} onClick={() => { const name = ask.name; setAsk(null); void send({ new_name: name, force: true, label: name }); }}>
+          <SheetAction disabled={busy} onClick={() => { const { name, closed } = ask; setAsk(null); void send({ new_name: name, closed, force: true, label: name }); }}>
             No, create “{ask.name}”
+          </SheetAction>
+        )}
+      </Sheet>
+      <Sheet
+        open={ask?.kind === "create"}
+        onClose={() => setAsk(null)}
+        title={ask?.kind === "create" ? `Create “${ask.name}”` : undefined}
+        message="Can other people join this team?"
+      >
+        {ask?.kind === "create" && (
+          <>
+            <SheetAction disabled={busy} onClick={() => { const name = ask.name; setAsk(null); void send({ new_name: name, label: name }); }}>
+              Open: others can join
+            </SheetAction>
+            <SheetAction disabled={busy} onClick={() => { const name = ask.name; setAsk(null); void send({ new_name: name, closed: true, label: name }); }}>
+              Closed: just their friends
+            </SheetAction>
+          </>
+        )}
+      </Sheet>
+      <Sheet
+        open={ask?.kind === "closed"}
+        onClose={() => setAsk(null)}
+        title={ask?.kind === "closed" ? `${ask.team.name} is closed` : undefined}
+        message={`They don't want people they don't know. Add ${person.name} only if they're their friend.`}
+      >
+        {ask?.kind === "closed" && (
+          <SheetAction disabled={busy} onClick={() => { const t = ask.team; setAsk(null); void send({ team_id: t.id, label: t.name }); }}>
+            Add Anyway
           </SheetAction>
         )}
       </Sheet>
@@ -292,6 +327,18 @@ export function TeamPicker({ eventId, person, move = false, onClose }: { eventId
         )}
       </Sheet>
     </div>
+  );
+}
+
+type Target = { team_id?: string; new_name?: string; closed?: boolean; force?: boolean; reserved_id?: string; label: string };
+
+/** "Closed" marker before a team's numbers. */
+export function ClosedTag() {
+  return (
+    <span className="mr-1 inline-flex items-center gap-0.5 font-semibold text-sys-orange">
+      <Lock className="h-[0.9em] w-[0.9em]" strokeWidth={2.6} aria-hidden />
+      Closed ·
+    </span>
   );
 }
 

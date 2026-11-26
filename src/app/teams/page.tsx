@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useApp } from "@/components/AppContext";
 import { api, errorMessage } from "@/components/api";
 import { Button, NeedEvent, Notice, Page, SearchField, Sheet, SheetAction, Spinner, TextField, fmtTime } from "@/components/ui";
-import { TeamPicker, addPerson, teamLine, useBoard, type Board, type BoardMember, type BoardTeam, type TeamPerson } from "@/components/Teams";
+import { ClosedTag, TeamPicker, addPerson, teamLine, useBoard, type Board, type BoardMember, type BoardTeam, type TeamPerson } from "@/components/Teams";
 
 type Msg = { tone: "ok" | "warn" | "error"; text: string };
 
@@ -34,13 +34,27 @@ export default function TeamsPage() {
     () => (board?.teams ?? []).filter((t) => !term || t.name.toLowerCase().includes(term) || t.members.some((m) => m.name.toLowerCase().includes(term))),
     [board, term],
   );
-  const notFull = teams.filter((t) => t.count < max);
+  const notFull = teams.filter((t) => t.count < max && !t.closed);
+  const closed = teams.filter((t) => t.count < max && t.closed);
   const full = teams.filter((t) => t.count >= max);
   const teamless = useMemo(() => (board?.here ?? []).filter((p) => !p.team_id && (!term || p.name.toLowerCase().includes(term))), [board, term]);
 
   const done = async (m: string | null) => {
     if (m) setMsg({ tone: "ok", text: m });
     await reload();
+  };
+
+  const toggleClosed = async (t: BoardTeam) => {
+    setBusy(true);
+    try {
+      await api("/api/teams/closed", { body: { team_id: t.id, closed: !t.closed } });
+      setMsg({ tone: "ok", text: t.closed ? `${t.name} is open: others can join.` : `${t.name} is closed: only their friends join.` });
+      await reload();
+    } catch (e) {
+      setMsg({ tone: "error", text: errorMessage(e) });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const remove = async () => {
@@ -72,7 +86,7 @@ export default function TeamsPage() {
         <SearchField value={q} onChange={setQ} placeholder="Team or member name" />
         {board && (
           <p className="t-footnote px-1 text-label2">
-            {board.teams.length} teams · {board.teams.filter((t) => t.count >= max).length} full · max {max} per team
+            {board.teams.length} teams · {board.teams.filter((t) => t.count >= max).length} full · {board.teams.filter((t) => t.closed && t.count < max).length} closed · max {max} per team
             {board.settings.team_small_ok ? " · smaller teams can play" : " · teams must be full to play"}
           </p>
         )}
@@ -108,11 +122,17 @@ export default function TeamsPage() {
           <TeamList title={`Teams with free spots (${notFull.length})`} teams={notFull} board={board} open={open} setOpen={setOpen}
             onAdd={(team) => setAdding({ team })} onClaim={(team, reserved) => setAdding({ team, reserved })}
             onMove={(m) => setPicking({ person: { attendee_id: m.attendee_id!, name: m.name }, move: true })}
-            onRemove={(team, member) => setRemoving({ team, member })} onRename={setRenaming} empty={term ? "No team matches." : "No team has a free spot."} />
+            onRemove={(team, member) => setRemoving({ team, member })} onRename={setRenaming} onToggle={(t) => void toggleClosed(t)} busy={busy} empty={term ? "No team matches." : "No open team has a free spot."} />
+          {closed.length > 0 && (
+            <TeamList title={`Closed teams (${closed.length})`} teams={closed} board={board} open={open} setOpen={setOpen}
+              onAdd={(team) => setAdding({ team })} onClaim={(team, reserved) => setAdding({ team, reserved })}
+              onMove={(m) => setPicking({ person: { attendee_id: m.attendee_id!, name: m.name }, move: true })}
+              onRemove={(team, member) => setRemoving({ team, member })} onRename={setRenaming} onToggle={(t) => void toggleClosed(t)} busy={busy} empty="" />
+          )}
           <TeamList title={`Full teams (${full.length})`} teams={full} board={board} open={open} setOpen={setOpen}
             onAdd={(team) => setAdding({ team })} onClaim={(team, reserved) => setAdding({ team, reserved })}
             onMove={(m) => setPicking({ person: { attendee_id: m.attendee_id!, name: m.name }, move: true })}
-            onRemove={(team, member) => setRemoving({ team, member })} onRename={setRenaming} empty={term ? "No team matches." : "No full team yet."} />
+            onRemove={(team, member) => setRemoving({ team, member })} onRename={setRenaming} onToggle={(t) => void toggleClosed(t)} busy={busy} empty={term ? "No team matches." : "No full team yet."} />
         </>
       )}
 
@@ -165,6 +185,8 @@ function TeamList(props: {
   onMove: (m: BoardMember) => void;
   onRemove: (t: BoardTeam, m: BoardMember) => void;
   onRename: (t: BoardTeam) => void;
+  onToggle: (t: BoardTeam) => void;
+  busy: boolean;
   empty: string;
 }) {
   const { teams, board, open, setOpen } = props;
@@ -182,7 +204,10 @@ function TeamList(props: {
               <button type="button" onClick={() => setOpen(isOpen ? null : t.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-bg4" aria-expanded={isOpen}>
                 <span className="min-w-0 flex-1">
                   <span className="block t-headline">{t.name}</span>
-                  <span className="block t-footnote text-label2">{teamLine(t, s.team_max)}</span>
+                  <span className="block t-footnote text-label2">
+                    {t.closed && <ClosedTag />}
+                    {teamLine(t, s.team_max)}
+                  </span>
                 </span>
                 <span className={`rounded-full px-2.5 py-0.5 t-footnote font-semibold ${st.cls}`}>{st.label}</span>
                 {isOpen ? <ChevronUp className="h-5 w-5 text-label3" aria-hidden /> : <ChevronDown className="h-5 w-5 text-label3" aria-hidden />}
@@ -226,6 +251,9 @@ function TeamList(props: {
                     )}
                     <Button variant="gray" onClick={() => props.onRename(t)}>
                       Rename
+                    </Button>
+                    <Button variant="gray" disabled={props.busy} onClick={() => props.onToggle(t)}>
+                      {t.closed ? "Open Team" : "Close Team"}
                     </Button>
                   </div>
                 </div>
@@ -301,6 +329,7 @@ function AddMembers({ eventId, board, team, reserved, onClose }: { eventId: stri
       </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         {msg && <Notice tone="info">{msg}</Notice>}
+        {team.closed && <Notice tone="warn">{team.name} is closed: add only their friends.</Notice>}
         <section>
           <h2 className="t-footnote mb-1.5 px-4 uppercase text-label2">Here without a team</h2>
           <ul className="overflow-hidden rounded-[12px] bg-bg2">

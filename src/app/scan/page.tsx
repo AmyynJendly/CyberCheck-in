@@ -15,7 +15,7 @@ import { haptic } from "@/components/haptics";
 import { startQrScanner, type QrScanner } from "@/components/qrScanner";
 import { TeamAsk, type TeamPerson } from "@/components/Teams";
 
-type TeamInfo = { name: string; count: number; here: number; max: number } | null;
+type TeamInfo = { name: string; closed?: boolean; count: number; here: number; max: number } | null;
 type Result =
   | {
       status: "OK";
@@ -444,7 +444,7 @@ function ResultOverlay({ result, onClose }: { result: Result; onClose: () => voi
       title = "Welcome";
       name = result.name;
       lines = [
-        result.team ? `Team ${result.team.name} · ${result.team.here} of ${result.team.max} here` : result.ask_team ? "No team yet" : "",
+        result.team ? `Team ${result.team.name}${result.team.closed ? " (closed)" : ""} · ${result.team.here} of ${result.team.max} here` : result.ask_team ? "No team yet" : "",
         [result.team ? null : result.team_name, result.class_year].filter(Boolean).join(" · "),
         result.payment
           ? `Paid ${fmtDT(result.payment.amount)} · ${result.payment.kind === "membership" ? "now a member" : "entry only"}`

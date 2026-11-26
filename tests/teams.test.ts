@@ -7,7 +7,7 @@ import { GET as csvGET } from "@/app/api/events/[id]/teams.csv/route";
 import { GET as boardGET } from "@/app/api/events/[id]/teams/route";
 import { checkInAttendee, undoCheckin } from "@/lib/checkin";
 import { cleanAttendeeFields, ingestFormSubmission } from "@/lib/attendees";
-import { addToTeam, removeFromTeam, renameTeam, similarTeam, swapMembers, teamBoard } from "@/lib/teams";
+import { addToTeam, removeFromTeam, renameTeam, setTeamClosed, similarTeam, swapMembers, teamBoard } from "@/lib/teams";
 import { closePool, query } from "@/lib/db";
 import { body, cookieFor, makeEvent, makeStaff, params, req, tokenOf, uniq } from "./helpers";
 import type { Staff } from "@/lib/auth";
@@ -159,6 +159,43 @@ describe("adding people to teams", () => {
   });
 });
 
+describe("open / closed teams", () => {
+  it("open by default; created closed or closed later (logged); still takes people; shown on the board, check-in and CSV", async () => {
+    const ev = await makeEvent();
+    const [aziz, mohamed, haroun, zayneb] = await people(ev.id, 4);
+    const open = await addToTeam(hr, { eventId: ev.id, attendeeId: haroun.id, newName: "Haroun Team" });
+    expect(open).toMatchObject({ status: "OK", team: { closed: false } });
+    const closed = await addToTeam(hr, { eventId: ev.id, attendeeId: aziz.id, newName: "Aziz Team", closed: true });
+    expect(closed).toMatchObject({ status: "OK", created: true, team: { closed: true } });
+    const azizTeam = closed.status === "OK" ? closed.team.id : "";
+    // Closed is a label for HR: a friend can still be added (the picker asks first).
+    expect(await addToTeam(hr, { eventId: ev.id, attendeeId: mohamed.id, teamId: azizTeam })).toMatchObject({ status: "OK", team: { count: 2, closed: true } });
+    // Joining an existing team by its name never changes it.
+    expect(await addToTeam(hr, { eventId: ev.id, attendeeId: zayneb.id, newName: "haroun team", closed: true })).toMatchObject({ status: "OK", team: { name: "Haroun Team", closed: false } });
+
+    const board = await teamBoard(ev.id, null);
+    expect(board.teams.map((t) => [t.name, t.closed])).toEqual([["Aziz Team", true], ["Haroun Team", false]]);
+    await checkInAttendee({ staff: hr, eventId: ev.id, attendeeId: aziz.id });
+    const cookie = await cookieFor(hr);
+    const scan = await body<Record<string, unknown>>(await checkinPOST(req("POST", "/api/checkin", { cookie, body: { event_id: ev.id, token: aziz.token } }), undefined));
+    expect(scan).toMatchObject({ status: "ALREADY_CHECKED_IN", team: { name: "Aziz Team", closed: true } });
+
+    // They change their mind: open, then closed again. Same value twice = no change, no log.
+    await setTeamClosed(hr, azizTeam, false);
+    await setTeamClosed(hr, azizTeam, false);
+    await setTeamClosed(hr2, azizTeam, true);
+    const log = await query<{ action: string; staff_id: string }>("select action, staff_id from audit_log where event_id = $1 and action in ('team_close', 'team_open') order by id", [ev.id]);
+    expect(log.rows).toEqual([{ action: "team_open", staff_id: hr.id }, { action: "team_close", staff_id: hr2.id }]);
+    const created = await query<{ details: { closed?: boolean } }>("select details from audit_log where event_id = $1 and action = 'team_create' and details->>'name' = 'Aziz Team'", [ev.id]);
+    expect(created.rows[0].details.closed).toBe(true);
+    await expect(setTeamClosed(hr, "00000000-0000-0000-0000-000000000000", true)).rejects.toMatchObject({ code: "TEAM_NOT_FOUND" });
+
+    const csv = await (await csvGET(req("GET", `/api/events/${ev.id}/teams.csv`, { cookie: await cookieFor(admin) }), params({ id: ev.id }))).text();
+    expect(csv).toContain("Aziz Team,no (closed),");
+    expect(csv).toContain("Haroun Team,yes,");
+  });
+});
+
 describe("reserved spots from the team sheet", () => {
   it("a reserved spot counts toward the max; claiming it fills it; removing the person gives it back", async () => {
     const ev = await makeEvent();
@@ -252,7 +289,7 @@ describe("board and download", () => {
     expect(http.status).toBe(200);
     expect((await csvGET(req("GET", `/api/events/${ev.id}/teams.csv`, { cookie: await cookieFor(hr) }), params({ id: ev.id }))).status).toBe(403);
     const csv = await (await csvGET(req("GET", `/api/events/${ev.id}/teams.csv`, { cookie: await cookieFor(admin) }), params({ id: ev.id }))).text();
-    expect(csv).toContain("Board Team,Can play (2/4),2/4,1");
-    expect(csv).toContain(`(no team),,,,${c.name},yes`);
+    expect(csv).toContain("Board Team,yes,Can play (2/4),2/4,1");
+    expect(csv).toContain(`(no team),,,,,${c.name},yes`);
   });
 });

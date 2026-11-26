@@ -1,4 +1,4 @@
-// POST /api/teams/add { event_id, attendee_id, team_id? | new_name?, force?, move?, reserved_id? }
+// POST /api/teams/add { event_id, attendee_id, team_id? | new_name? (+ closed?), force?, move?, reserved_id? }
 // → { status: OK | ALREADY_IN_TEAM | IN_OTHER_TEAM | FULL | SIMILAR, ... }
 import { json, readJson, route } from "@/lib/http";
 import { requireStaff } from "@/lib/auth";
@@ -17,6 +17,7 @@ export const POST = route(async (req) => {
       attendeeId: requireUuid(body.attendee_id, "attendee_id"),
       teamId: optionalUuid(body.team_id, "team_id"),
       newName: body.new_name,
+      closed: body.closed === true,
       force: body.force === true,
       move: body.move === true,
       reservedId: optionalUuid(body.reserved_id, "reserved_id"),
