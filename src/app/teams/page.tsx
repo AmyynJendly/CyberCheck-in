@@ -243,16 +243,16 @@ function TeamList(props: {
                       </Button>
                     </div>
                   ))}
-                  <div className="flex gap-2 px-4 py-3">
+                  <div className="flex flex-wrap gap-2 px-4 py-3">
                     {t.count < s.team_max && (
-                      <Button className="flex-1" onClick={() => props.onAdd(t)}>
+                      <Button className="basis-full" onClick={() => props.onAdd(t)}>
                         Add Members
                       </Button>
                     )}
-                    <Button variant="gray" onClick={() => props.onRename(t)}>
+                    <Button className="flex-1" variant="gray" onClick={() => props.onRename(t)}>
                       Rename
                     </Button>
-                    <Button variant="gray" disabled={props.busy} onClick={() => props.onToggle(t)}>
+                    <Button className="flex-1" variant="gray" disabled={props.busy} onClick={() => props.onToggle(t)}>
                       {t.closed ? "Open Team" : "Close Team"}
                     </Button>
                   </div>
